@@ -1,87 +1,62 @@
-# AirSpace API — MVP backend
+# Airspace - MVP backend
 
-FastAPI backend for **AirSpace: Vent and Decompress**. Includes account registration/login, private emotional check-ins, a vent endpoint, an optional AI reflection endpoint, and basic safety routing.
+FastAPI backend for **AirSpace: Vent and Decompress**. Includes account registration/login, transient venting, optional AI-assisted reflection, emotional check-ins, and deletion controls
 
-## MVP scope
-
-- Email/password authentication with JWT bearer tokens.
-- Password hashing with Argon2 through `pwdlib`.
-- Vent endpoint returns acknowledgement and reflection prompts; **raw vent text is not stored**.
-- Reframe endpoint uses OpenAI only when `OPENAI_API_KEY` is configured; otherwise it returns a clearly generic fallback.
-- Mood check-ins (1–10 before/after) can be listed and deleted by their owner.
-- Account deletion cascades to saved check-ins.
-- `/health` endpoint for deployment checks.
-- Render deployment manifest.
-
-## Important limitations before real users
-
-This is an MVP scaffold, not a clinically validated product or a security audit. Do not market it as therapy, an emergency service, or guaranteed confidential care. The crisis phrase detector is deliberately simple and can miss risk or flag context incorrectly. It must not be the only safety mechanism.
-
-Before production:
-1. Use managed PostgreSQL on Render; do not rely on a local SQLite file for production persistence.
-2. Set a long, unique `JWT_SECRET` and exact frontend origins in `CORS_ORIGINS`.
-3. Use HTTPS, rate limiting, email verification, password reset, abuse controls, dependency scanning, backups, and monitoring that does not log vent content.
-4. Review Nigerian privacy obligations and applicable data-protection requirements with a qualified professional.
-5. Establish a reviewed crisis-response protocol and display locally appropriate support options. Do not rely on the simple keyword detector alone.
-6. Decide retention, consent, deletion, and AI-provider data handling with users before launch. Avoid sending identifying details to an AI provider.
-7. Add tests and security review before collecting sensitive real-world data.
-
-## Run locally
+## Run locally (Windows PowerShell)
 
 Requires Python 3.11+.
 
-```bash
+```powershell
 python -m venv .venv
-# Windows PowerShell:
-.venv\\Scripts\\Activate.ps1
-# macOS/Linux:
-source .venv/bin/activate
-
+.\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-copy .env.example .env   # Windows; on macOS/Linux use: cp .env.example .env
+Copy-Item .env.example .env
 uvicorn app.main:app --reload
 ```
 
 Open `http://127.0.0.1:8000/docs` for interactive API documentation.
 
+## Tests
+
+```powershell
+pytest -q
+```
+
+The API tests use an isolated in-memory SQLite database. They do not replace a deployment smoke test against the PostgreSQL database configured on Render.
+
 ## Environment variables
 
-- `DATABASE_URL`: local default is SQLite; use a PostgreSQL connection string in deployment.
-- `JWT_SECRET`: replace the example value before deployment.
+- `ENVIRONMENT`: `development` locally, `production` on Render.
+- `DATABASE_URL`: SQLite locally; PostgreSQL in production.
+- `JWT_SECRET`: a unique random value in production. Production settings reject the placeholder or a secret shorter than 32 characters.
 - `CORS_ORIGINS`: comma-separated exact frontend origins.
-- `OPENAI_API_KEY`: optional. Leave blank to use the generic fallback.
-- `OPENAI_MODEL`: model name available to your API account.
-- `PERSIST_VENT_TEXT`: currently not used to persist vents; raw vent content is never written by this MVP.
+- `OPENAI_API_KEY`: optional. When configured, the reframe endpoint requires explicit consent before sending the text to OpenAI.
+- `OPENAI_MODEL`: a model available to your API account.
 
-## API quick start
-
-1. `POST /api/v1/auth/register` with `{"email":"you@example.com","password":"at-least-10-chars"}`.
-2. Copy `access_token` from the response.
-3. In Swagger, click **Authorize** and enter `Bearer YOUR_TOKEN` (or use the token as the bearer credential).
-4. Try:
-   - `POST /api/v1/vent` — `{"text":"I have had a difficult day."}`
-   - `POST /api/v1/reframe` — `{"text":"I feel overwhelmed by everything.","prompt_style":"gentle"}`
-   - `POST /api/v1/checkins` — `{"before_score":8,"after_score":5,"emotion":"overwhelmed","note":"Felt calmer after writing."}`
-   - `GET /api/v1/checkins`
-   - `DELETE /api/v1/checkins/{id}`
-   - `DELETE /api/v1/account`
-
-## Endpoint summary
+## Endpoints
 
 | Method | Path | Purpose |
-|---|---|---|
+| --- | --- | --- |
 | GET | `/health` | Health check |
 | POST | `/api/v1/auth/register` | Create account |
-| POST | `/api/v1/auth/login` | Get access token |
-| POST | `/api/v1/vent` | Receive acknowledgement/prompts; does not save text |
-| POST | `/api/v1/reframe` | Optional AI-assisted reflection |
-| POST | `/api/v1/checkins` | Save emotional state check-in |
-| GET | `/api/v1/checkins` | List own check-ins |
-| DELETE | `/api/v1/checkins/{id}` | Delete own check-in |
-| DELETE | `/api/v1/account` | Delete account and check-ins |
+| POST | `/api/v1/auth/login` | Obtain bearer token |
+| POST | `/api/v1/vent` | Return acknowledgement/prompts; does not persist the submitted text |
+| POST | `/api/v1/reframe` | Generic fallback or consent-based AI reflection |
+| POST | `/api/v1/checkins` | Save emotional check-in |
+| GET | `/api/v1/checkins` | List the authenticated user's check-ins |
+| DELETE | `/api/v1/checkins/{id}` | Delete an owned check-in |
+| DELETE | `/api/v1/account` | Delete account and associated check-ins |
 
-## Architecture
+When the AI key is configured, the frontend must explain that the text will be processed by an external AI provider and set `consent_to_ai_processing` to `true` only after the user opts in. Without consent, the API does not send the text to the provider. Without an API key, the API returns a generic fallback that does not use the submitted text.
 
-`FastAPI routes → schemas → SQLAlchemy models → database`
+## Render
 
-The MVP deliberately separates transient venting from persisted check-in tracking. This reduces stored sensitive content, but check-in notes are still sensitive personal data and should be treated accordingly.
+`render.yaml` defines the web service but does not create a PostgreSQL database. Create a managed PostgreSQL database and configure `DATABASE_URL` and `CORS_ORIGINS` in Render. The PostgreSQL driver is included and `postgres://` URLs are normalized to the psycopg SQLAlchemy dialect.
+
+## Privacy and safety limitations
+
+This is an MVP scaffold, not a clinical tool or a security audit. The phrase detector is a basic routing aid; it can miss risk or flag context incorrectly and cannot determine whether someone is safe. Establish a reviewed safety protocol and appropriate human-support guidance before inviting real users.
+
+Raw vent text is not persisted by this API. If AI reflection is enabled and the user opts in, the submitted text is sent to OpenAI for processing. Check-in notes are stored and may contain sensitive personal information. Do not describe the service as guaranteed confidential, therapy, or an emergency service.
+
+Before production, add rate limiting, account recovery, email verification where appropriate, Alembic migrations, backups, monitoring that does not log sensitive content, and a review of applicable privacy obligations.

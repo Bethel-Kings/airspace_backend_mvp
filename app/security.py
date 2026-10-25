@@ -6,15 +6,22 @@ from app.config import settings
 password_hash = PasswordHash.recommended()
 ALGORITHM = "HS256"
 
+
 def hash_password(password: str) -> str:
     return password_hash.hash(password)
 
+
 def verify_password(password: str, hashed: str) -> bool:
-    return password_hash.verify(password, hashed)
+    try:
+        return password_hash.verify(password, hashed)
+    except (ValueError, TypeError):
+        return False
+
 
 def create_access_token(subject: str) -> str:
     expires = datetime.now(timezone.utc) + timedelta(minutes=settings.jwt_expire_minutes)
     return jwt.encode({"sub": subject, "exp": expires}, settings.jwt_secret, algorithm=ALGORITHM)
 
+
 def decode_access_token(token: str) -> dict:
-    return jwt.decode(token, settings.jwt_secret, algorithms=[ALGORITHM])
+    return jwt.decode(token, settings.jwt_secret, algorithms=[ALGORITHM], options={"require": ["sub", "exp"]})
