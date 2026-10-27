@@ -99,3 +99,136 @@ def test_checkin_score_validation(client):
         headers={"Authorization": f"Bearer {token}"},
     )
     assert response.status_code == 422
+
+
+def auth(token):
+    return {"Authorization": f"Bearer {token}"}
+
+
+def test_me_returns_profile_and_requires_token(client):
+    assert client.get("/api/v1/me").status_code == 401
+    token = register(client, "me@example.com")
+    body = client.get("/api/v1/me", headers=auth(token)).json()
+    assert body["email"] == "me@example.com"
+    assert "password_hash" not in body
+
+
+def test_patch_checkin_sets_after_score(client):
+    token = register(client, "patch@example.com")
+    created = client.post("/api/v1/checkins", json={"before_score": 3}, headers=auth(token)).json()
+    assert created["after_score"] is None
+    patched = client.patch(f"/api/v1/checkins/{created['id']}", json={"after_score": 6}, headers=auth(token))
+    assert patched.status_code == 200
+    assert patched.json()["after_score"] == 6
+    assert patched.json()["before_score"] == 3
+
+
+def test_patch_checkin_validation_and_ownership(client):
+    a, b = register(client, "pa@example.com"), register(client, "pb@example.com")
+    cid = client.post("/api/v1/checkins", json={"before_score": 4}, headers=auth(a)).json()["id"]
+    assert client.patch(f"/api/v1/checkins/{cid}", json={}, headers=auth(a)).status_code == 422
+    assert client.patch(f"/api/v1/checkins/{cid}", json={"before_score": 9}, headers=auth(a)).status_code == 422
+    assert client.patch(f"/api/v1/checkins/{cid}", json={"after_score": 11}, headers=auth(a)).status_code == 422
+    assert client.patch(f"/api/v1/checkins/{cid}", json={"after_score": 5}, headers=auth(b)).status_code == 404
+
+
+def test_patch_can_clear_note(client):
+    token = register(client, "clear@example.com")
+    cid = client.post("/api/v1/checkins", json={"before_score": 4, "note": "hi"}, headers=auth(token)).json()["id"]
+    cleared = client.patch(f"/api/v1/checkins/{cid}", json={"note": None}, headers=auth(token)).json()
+    assert cleared["note"] is None
+
+
+def test_checkin_note_triggers_safety_notice(client):
+    token = register(client, "note@example.com")
+    flagged = client.post(
+        "/api/v1/checkins", json={"before_score": 2, "note": "I want to die"}, headers=auth(token)
+    ).json()
+    assert flagged["safety_notice"]
+    plain = client.post("/api/v1/checkins", json={"before_score": 5, "note": "ok day"}, headers=auth(token)).json()
+    assert plain["safety_notice"] is None
+
+
+def test_checkin_timestamp_is_timezone_aware(client):
+    token = register(client, "tz@example.com")
+    created = client.post("/api/v1/checkins", json={"before_score": 5}, headers=auth(token)).json()
+    assert created["created_at"].endswith(("Z", "+00:00"))
+
+
+def test_vent_flags_curly_apostrophe_crisis(client):
+    token = register(client, "vent@example.com")
+    body = client.post("/api/v1/vent", json={"text": "I don\u2019t want to live"}, headers=auth(token)).json()
+    assert body["safety_notice"]
+
+
+def test_register_is_rate_limited(client):
+    codes = [
+        client.post("/api/v1/auth/register", json={"email": f"u{i}@example.com", "password": "safe-password-123"}).status_code
+        for i in range(12)
+    ]
+    assert codes[:10] == [201] * 10
+    assert codes[10] == 429
+    limited = client.post("/api/v1/auth/register", json={"email": "z@example.com", "password": "safe-password-123"})
+    assert "retry-after" in limited.headers
+
+
+def test_login_per_email_limit_and_generic_error(client):
+    register(client, "brute@example.com")
+    codes = [
+        client.post("/api/v1/auth/login", json={"email": "brute@example.com", "password": "wrong-password"}).status_code
+        for _ in range(11)
+    ]
+    assert codes[:10] == [401] * 10
+    assert codes[10] == 429
+    unknown = client.post("/api/v1/auth/login", json={"email": "nobody@example.com", "password": "x"})
+    assert unknown.status_code == 401
+    assert unknown.json()["detail"] == "Invalid email or password."
+
+
+def test_reframe_paths(client, monkeypatch):
+    token = register(client, "ref@example.com")
+    # no AI key
+    monkeypatch.setattr(main.settings, "openai_api_key", None)
+    r = client.post("/api/v1/reframe", json={"text": "bad day"}, headers=auth(token)).json()
+    assert r["ai_status"] == "unavailable" and r["ai_enabled"] is False
+    # AI key but no consent
+    monkeypatch.setattr(main.settings, "openai_api_key", "sk-test")
+    r = client.post("/api/v1/reframe", json={"text": "bad day"}, headers=auth(token)).json()
+    assert r["ai_status"] == "consent_required" and r["consent_required"] is True and r["reflection"] is None
+    # consent given, provider mocked
+    async def fake(text, style):
+        from app.ai import ReflectionResult
+        return ReflectionResult("a reflection", "success")
+    monkeypatch.setattr(main, "generate_reflection", fake)
+    r = client.post("/api/v1/reframe", json={"text": "bad day", "consent_to_ai_processing": True}, headers=auth(token)).json()
+    assert r["ai_status"] == "success" and r["reflection"] == "a reflection"
+    # crisis text never reaches the provider
+    called = []
+    async def spy(text, style):
+        called.append(text)
+        return fake(text, style)
+    monkeypatch.setattr(main, "generate_reflection", spy)
+    r = client.post("/api/v1/reframe", json={"text": "I want to die", "consent_to_ai_processing": True}, headers=auth(token)).json()
+    assert r["ai_status"] == "skipped_for_safety" and r["needs_human_support"] is True and not called
+
+
+def test_reframe_ai_calls_are_limited_per_user(client, monkeypatch):
+    token = register(client, "cost@example.com")
+    monkeypatch.setattr(main.settings, "openai_api_key", "sk-test")
+    async def fake(text, style):
+        from app.ai import ReflectionResult
+        return ReflectionResult("ok", "success")
+    monkeypatch.setattr(main, "generate_reflection", fake)
+    body = {"text": "bad day", "consent_to_ai_processing": True}
+    codes = [client.post("/api/v1/reframe", json=body, headers=auth(token)).status_code for _ in range(31)]
+    assert codes[:30] == [200] * 30 and codes[30] == 429
+    # safety path stays available even when throttled
+    crisis = client.post("/api/v1/reframe", json={"text": "I want to die"}, headers=auth(token))
+    assert crisis.status_code == 200
+
+
+def test_openapi_declares_ai_status_enum(client):
+    schema = client.get("/openapi.json").json()["components"]["schemas"]["ReframeResponse"]
+    assert set(schema["properties"]["ai_status"]["enum"]) == {
+        "skipped_for_safety", "unavailable", "consent_required", "success", "fallback"
+    }

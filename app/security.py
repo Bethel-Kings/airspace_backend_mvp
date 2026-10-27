@@ -11,6 +11,10 @@ def hash_password(password: str) -> str:
     return password_hash.hash(password)
 
 
+# Verified against when the email is unknown, so login timing doesn't reveal which emails exist.
+DUMMY_HASH = password_hash.hash("not-a-real-password-timing-equalizer")
+
+
 def verify_password(password: str, hashed: str) -> bool:
     try:
         return password_hash.verify(password, hashed)

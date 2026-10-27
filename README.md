@@ -32,6 +32,9 @@ The API tests use an isolated in-memory SQLite database. They do not replace a d
 - `CORS_ORIGINS`: comma-separated exact frontend origins.
 - `OPENAI_API_KEY`: optional. When configured, the reframe endpoint requires explicit consent before sending the text to OpenAI.
 - `OPENAI_MODEL`: a model available to your API account.
+- `CRISIS_RESOURCES`: optional, reviewed local support contacts appended to the crisis message.
+
+`JWT_SECRET` has no default. In development an ephemeral one is generated (tokens reset on restart). Production refuses to start without a strong one.
 
 ## Endpoints
 
@@ -59,4 +62,4 @@ This is an MVP scaffold, not a clinical tool or a security audit. The phrase det
 
 Raw vent text is not persisted by this API. If AI reflection is enabled and the user opts in, the submitted text is sent to OpenAI for processing. Check-in notes are stored and may contain sensitive personal information. Do not describe the service as guaranteed confidential, therapy, or an emergency service.
 
-Before production, add rate limiting, account recovery, email verification where appropriate, Alembic migrations, backups, monitoring that does not log sensitive content, and a review of applicable privacy obligations.
+Rate limiting is in-memory and per-process (fine for one Render instance; move to Redis if you scale out). Before production, add account recovery, email verification where appropriate, Alembic migrations, backups, monitoring that does not log sensitive content, and a review of applicable privacy obligations.
