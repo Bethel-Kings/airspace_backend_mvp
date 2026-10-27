@@ -10,6 +10,15 @@ class ErrorResponse(BaseModel):
     detail: str
 
 
+class CrisisResource(BaseModel):
+    name: str
+    phone: str
+    alt_phone: str | None = None
+    hours: str
+    description: str
+    url: str = ""
+
+
 class RegisterRequest(BaseModel):
     email: EmailStr
     password: str = Field(min_length=10, max_length=128)
@@ -52,12 +61,14 @@ class VentResponse(BaseModel):
     acknowledgement: str
     reflection_prompts: list[str]
     safety_notice: str | None = None
+    crisis_resources: list[CrisisResource] | None = None
     stored: bool = False
 
 
 class ReframeResponse(BaseModel):
     reflection: str | None = None
     safety_notice: str | None = None
+    crisis_resources: list[CrisisResource] | None = None
     needs_human_support: bool = False
     ai_enabled: bool
     ai_status: AiStatus
@@ -95,6 +106,7 @@ class CheckInResponse(BaseModel):
     created_at: datetime
     # Set on create/update responses when the emotion or note text trips the safety check.
     safety_notice: str | None = None
+    crisis_resources: list[CrisisResource] | None = None
     model_config = ConfigDict(from_attributes=True)
 
     @field_validator("created_at")

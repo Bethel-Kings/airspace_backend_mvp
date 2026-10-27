@@ -20,8 +20,8 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:3000,http://localhost:5173"
     openai_api_key: str | None = None
     openai_model: str = "gpt-4o-mini"
-    # Optional, verified local support contacts appended to the crisis message
-    # (e.g. "Emergency: <number>. Support line: <number>."). Keep this reviewed.
+    # Verified local support contacts appended to the crisis message
+    # (can be a JSON array of CrisisResource objects, or plain text contacts).
     crisis_resources: str = ""
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore", case_sensitive=False)

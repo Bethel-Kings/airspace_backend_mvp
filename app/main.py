@@ -10,9 +10,9 @@ from app.config import settings
 from app.database import Base, engine, get_db
 from app.models import CheckIn, User
 from app.ratelimit import client_ip, ip_limit, limiter
-from app.safety import get_crisis_message, may_need_immediate_support
+from app.safety import get_crisis_message, get_crisis_resources, may_need_immediate_support
 from app.schemas import (
-    CheckInCreate, CheckInResponse, CheckInUpdate, ErrorResponse, LoginRequest, ReframeRequest,
+    CheckInCreate, CheckInResponse, CheckInUpdate, CrisisResource, ErrorResponse, LoginRequest, ReframeRequest,
     ReframeResponse, RegisterRequest, TokenResponse, UserResponse, VentRequest, VentResponse,
 )
 from app.security import DUMMY_HASH, create_access_token, hash_password, verify_password
@@ -53,12 +53,23 @@ def with_safety_notice(item: CheckIn) -> CheckInResponse:
     response = CheckInResponse.model_validate(item)
     if may_need_immediate_support(item.note) or may_need_immediate_support(item.emotion):
         response.safety_notice = get_crisis_message()
+        response.crisis_resources = get_crisis_resources()
     return response
 
 
 @app.get("/health", tags=["system"], summary="Liveness check")
 def health():
     return {"status": "ok", "service": "airspace-api"}
+
+
+@app.get(
+    "/api/v1/crisis-resources",
+    response_model=list[CrisisResource],
+    tags=["safety"],
+    summary="List crisis intervention and mental health support resources",
+)
+def list_crisis_resources():
+    return get_crisis_resources()
 
 
 @app.post(
@@ -121,6 +132,7 @@ def vent(payload: VentRequest, user: User = Depends(current_user)):
             "What would help you feel a little more supported in the next few minutes?",
         ],
         safety_notice=get_crisis_message() if crisis else None,
+        crisis_resources=get_crisis_resources() if crisis else None,
         stored=False,
     )
 
@@ -133,6 +145,7 @@ async def reframe(payload: ReframeRequest, request: Request, user: User = Depend
         return ReframeResponse(
             reflection=None,
             safety_notice=get_crisis_message(),
+            crisis_resources=get_crisis_resources(),
             needs_human_support=True,
             ai_enabled=bool(settings.openai_api_key),
             ai_status="skipped_for_safety",

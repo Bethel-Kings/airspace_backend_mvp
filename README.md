@@ -32,7 +32,7 @@ The API tests use an isolated in-memory SQLite database. They do not replace a d
 - `CORS_ORIGINS`: comma-separated exact frontend origins.
 - `OPENAI_API_KEY`: optional. When configured, the reframe endpoint requires explicit consent before sending the text to OpenAI.
 - `OPENAI_MODEL`: a model available to your API account.
-- `CRISIS_RESOURCES`: optional, reviewed local support contacts appended to the crisis message.
+- `CRISIS_RESOURCES`: optional, reviewed local support contacts (JSON array of `CrisisResource` objects or plain text) included in safety notices and returned by `/api/v1/crisis-resources`.
 
 `JWT_SECRET` has no default. In development an ephemeral one is generated (tokens reset on restart). Production refuses to start without a strong one.
 
@@ -41,12 +41,15 @@ The API tests use an isolated in-memory SQLite database. They do not replace a d
 | Method | Path | Purpose |
 | --- | --- | --- |
 | GET | `/health` | Health check |
+| GET | `/api/v1/crisis-resources` | Public directory of crisis intervention and support hotlines |
 | POST | `/api/v1/auth/register` | Create account |
 | POST | `/api/v1/auth/login` | Obtain bearer token |
+| GET | `/api/v1/me` | Current user profile (token validation) |
 | POST | `/api/v1/vent` | Return acknowledgement/prompts; does not persist the submitted text |
 | POST | `/api/v1/reframe` | Generic fallback or consent-based AI reflection |
 | POST | `/api/v1/checkins` | Save emotional check-in |
 | GET | `/api/v1/checkins` | List the authenticated user's check-ins |
+| PATCH | `/api/v1/checkins/{id}` | Update after_score / emotion / note on owned check-in |
 | DELETE | `/api/v1/checkins/{id}` | Delete an owned check-in |
 | DELETE | `/api/v1/account` | Delete account and associated check-ins |
 

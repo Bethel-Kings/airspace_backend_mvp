@@ -232,3 +232,44 @@ def test_openapi_declares_ai_status_enum(client):
     assert set(schema["properties"]["ai_status"]["enum"]) == {
         "skipped_for_safety", "unavailable", "consent_required", "success", "fallback"
     }
+
+
+def test_crisis_resources_endpoint_public(client):
+    response = client.get("/api/v1/crisis-resources")
+    assert response.status_code == 200
+    data = response.json()
+    assert isinstance(data, list)
+    assert len(data) == 5
+    mani = next(r for r in data if "MANI" in r["name"])
+    assert mani["phone"] == "08091116264"
+    assert mani["alt_phone"] == "08111680686"
+    assert mani["hours"] == "24/7"
+    assert "https://mentallyaware.org" in mani["url"]
+
+
+def test_crisis_resources_in_flagged_responses(client):
+    token = register(client, "safety_flow@example.com")
+
+    # Vent crisis response
+    vent_res = client.post(
+        "/api/v1/vent", json={"text": "I want to die"}, headers=auth(token)
+    ).json()
+    assert vent_res["safety_notice"] is not None
+    assert vent_res["crisis_resources"] is not None
+    assert len(vent_res["crisis_resources"]) == 5
+
+    # Reframe crisis response
+    reframe_res = client.post(
+        "/api/v1/reframe", json={"text": "I don't want to live"}, headers=auth(token)
+    ).json()
+    assert reframe_res["safety_notice"] is not None
+    assert reframe_res["crisis_resources"] is not None
+    assert len(reframe_res["crisis_resources"]) == 5
+
+    # Checkin crisis response
+    checkin_res = client.post(
+        "/api/v1/checkins", json={"before_score": 1, "note": "suicide"}, headers=auth(token)
+    ).json()
+    assert checkin_res["safety_notice"] is not None
+    assert checkin_res["crisis_resources"] is not None
+    assert len(checkin_res["crisis_resources"]) == 5
