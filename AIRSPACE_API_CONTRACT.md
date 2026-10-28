@@ -165,8 +165,9 @@ Errors: `413` (file too large), `415` (unsupported extension; name the file with
 ```
 - **Stateless:** the server stores nothing. The client keeps the conversation and resends it each turn (1-20 messages, 12,000 chars total, last message must be `user`, roles are only `user` and `assistant`; `system` returns `422`).
 - Every user message in the window is screened. If any is flagged, `ai_status` is `skipped_for_safety` and no AI call is made. Start a fresh conversation only after showing the safety screen.
-- Without an API key the reply is the generic fallback and `ai_status` is `unavailable`. Limit: 60 AI calls per hour per user (`429`).
+- Without a Groq API key the reply is the generic fallback and `ai_status` is `unavailable`. Limit: 60 AI calls per hour per user (`429`).
 - Consent flow is the same as `/reframe`.
+- Chat text is sent to Groq after consent. `/reframe` and generated voice replies use DeepSeek; voice audio is sent to ElevenLabs for transcription.
 
 ### `POST /api/v1/reframe`  (auth)
 ```json
@@ -198,7 +199,7 @@ Errors: `413` (file too large), `415` (unsupported extension; name the file with
 
 **Limits:** AI calls (consented requests only) are capped at 30/hour per user; over that, `429`. Crisis and consent responses are never rate limited.
 
-**Consent flow:** the client cannot know in advance whether AI is on. First call with `consent_to_ai_processing: false`. If the response is `consent_required`, show a disclosure that the text is sent to an external provider (DeepSeek), then resend only after the user opts in. Never default the flag to `true`.
+**Consent flow:** the client cannot know in advance whether AI is on. First call with `consent_to_ai_processing: false`. If the response is `consent_required`, show a disclosure that `/reframe` text is sent to DeepSeek or `/chat` text is sent to Groq, then resend only after the user opts in. Never default the flag to `true`.
 
 ### `POST /api/v1/checkins`  (auth)
 ```json

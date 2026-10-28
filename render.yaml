@@ -18,6 +18,12 @@ services:
         sync: false
       - key: DEEPSEEK_MODEL
         value: deepseek-v4-flash
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GROQ_BASE_URL
+        value: https://api.groq.com/openai/v1
+      - key: GROQ_MODEL
+        value: openai/gpt-oss-120b
       - key: ELEVENLABS_API_KEY
         sync: false
       - key: ELEVENLABS_STT_MODEL
