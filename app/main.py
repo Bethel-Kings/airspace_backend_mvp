@@ -1,5 +1,5 @@
 from contextlib import asynccontextmanager
-from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -12,9 +12,11 @@ from app.models import CheckIn, User
 from app.ratelimit import client_ip, ip_limit, limiter
 from app.safety import get_crisis_message, get_crisis_resources, may_need_immediate_support
 from app.schemas import (
-    ChatRequest, ChatResponse, CheckInCreate, CheckInResponse, CheckInUpdate, CrisisResource, ErrorResponse,
-    LoginRequest, ReframeRequest, ReframeResponse, RegisterRequest, TokenResponse, UserResponse, VentRequest,
-    VentResponse, VoiceVentResponse,
+    CHAT_MAX_MESSAGE_CHARS, CHAT_MAX_MESSAGES, CHAT_MAX_TOTAL_CHARS, CHECKIN_NOTE_MAX_CHARS,
+    CHECKIN_OFFSET_MAX, CHECKIN_PAGE_SIZE, MAX_REFRAME_CHARS, MAX_VENT_CHARS,
+    CapabilitiesResponse, ChatRequest, ChatResponse, CheckInCreate, CheckInResponse, CheckInUpdate,
+    CrisisResource, ErrorResponse, LoginRequest, ReframeRequest, ReframeResponse, RegisterRequest,
+    TokenResponse, UserResponse, VentRequest, VentResponse, VoiceVentResponse,
 )
 from app.security import DUMMY_HASH, create_access_token, hash_password, verify_password
 
@@ -126,6 +128,26 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
          responses=AUTH_401)
 def me(user: User = Depends(current_user)):
     return user
+
+
+@app.get("/api/v1/capabilities", response_model=CapabilitiesResponse, tags=["system"],
+         summary="Current feature availability and request limits", responses=AUTH_401)
+def capabilities(user: User = Depends(current_user)):
+    # Report switches and limits only. Never expose API keys or other secret settings.
+    return CapabilitiesResponse(
+        ai_enabled=settings.ai_enabled,
+        text_ai_provider="DeepSeek" if settings.ai_enabled else None,
+        transcription_enabled=settings.transcription_enabled,
+        transcription_provider="ElevenLabs" if settings.transcription_enabled else None,
+        max_vent_chars=MAX_VENT_CHARS,
+        max_reframe_chars=MAX_REFRAME_CHARS,
+        max_audio_bytes=settings.max_audio_bytes,
+        chat_max_messages=CHAT_MAX_MESSAGES,
+        chat_max_message_chars=CHAT_MAX_MESSAGE_CHARS,
+        chat_max_total_chars=CHAT_MAX_TOTAL_CHARS,
+        checkins_page_size=CHECKIN_PAGE_SIZE,
+        checkin_note_max_chars=CHECKIN_NOTE_MAX_CHARS,
+    )
 
 
 @app.post("/api/v1/vent", response_model=VentResponse, tags=["vent"],
@@ -289,13 +311,19 @@ def create_checkin(payload: CheckInCreate, db: Session = Depends(get_db), user: 
 
 
 @app.get("/api/v1/checkins", response_model=list[CheckInResponse], tags=["checkins"],
-         summary="List check-ins (newest first, max 100)", responses=AUTH_401)
-def list_checkins(db: Session = Depends(get_db), user: User = Depends(current_user)):
+         summary="List a page of check-ins (newest first; max 100)", responses=AUTH_401)
+def list_checkins(
+    limit: int = Query(default=CHECKIN_PAGE_SIZE, ge=1, le=CHECKIN_PAGE_SIZE),
+    offset: int = Query(default=0, ge=0, le=CHECKIN_OFFSET_MAX),
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
     query = (
         select(CheckIn)
         .where(CheckIn.user_id == user.id)
         .order_by(CheckIn.created_at.desc(), CheckIn.id.desc())
-        .limit(100)
+        .limit(limit)
+        .offset(offset)
     )
     return list(db.scalars(query))
 

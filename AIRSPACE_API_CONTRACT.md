@@ -108,6 +108,11 @@ Same body. `200` returns the same token shape. Errors: `401 "Invalid email or pa
 ### `GET /api/v1/me`  (auth)
 `200 {"id": 1, "email": "user@example.com", "created_at": "..."}`. Call on app start to validate a stored token; on `401`, clear it and show login.
 
+### `GET /api/v1/capabilities`  (auth)
+Returns server feature switches and safe request limits; credentials are never returned. `ai_enabled` covers text reflection and chat. `transcription_enabled` covers server-side voice transcription. Provider names are `DeepSeek` and `ElevenLabs` only when configured, otherwise `null`.
+
+The response also includes `max_vent_chars`, `max_reframe_chars`, `max_audio_bytes`, `chat_max_messages`, `chat_max_message_chars`, `chat_max_total_chars`, `checkins_page_size`, and `checkin_note_max_chars`. Read it after login to show which experiences are available.
+
 ### `POST /api/v1/vent`  (auth)
 ```json
 { "text": "1 to 12000 chars" }
@@ -216,7 +221,7 @@ If `emotion` or `note` trips the crisis check, `safety_notice` and `crisis_resou
 Send only the fields to change: `after_score` (1-10), `emotion`, `note`. An explicit `null` clears that field. `before_score` cannot be changed. Unknown fields and an empty body return `422`. Returns the full check-in (with `safety_notice` and `crisis_resources`). `404` if not found or not yours.
 
 ### `GET /api/v1/checkins`  (auth)
-`200` returns an array of check-ins, newest first, **hard-capped at 100**. No pagination, filtering, or total count yet. `safety_notice` and `crisis_resources` are always `null` here.
+`200` returns an array of check-ins, newest first. Optional query parameters: `limit` (default 100, range 1–100) and `offset` (default 0, range 0–1,000,000). The response remains an array for compatibility; request successive offsets to load older entries. `safety_notice` and `crisis_resources` are always `null` here.
 
 ### `DELETE /api/v1/checkins/{id}`  (auth)
 `204` with an empty body. `404` if not found or not yours.
@@ -295,10 +300,8 @@ type ApiError = { detail: string | { loc: (string | number)[]; msg: string; type
 | Gap | Frontend impact |
 |---|---|
 | No token refresh / logout | 7-day hard expiry; logout is client-side only (delete the token) |
-| No capabilities endpoint | Cannot know `ai_enabled` before the first `/reframe` call |
 | No password reset / email verification | Forgotten password means a lost account |
 | `DELETE /account` needs no password | Add a confirmation dialog in the UI |
-| Check-in list capped at 100, unpaginated | History screens will truncate |
 | Rate limits are per-server-process | Fine on one Render instance; not shared across instances |
 | `/vent` text is static | Do not market it as personalized (use `/chat` or `/vent/voice` with `reflect=true` for AI replies) |
 | Chat history is client-held | Losing the client state loses the conversation; the server never keeps it |
