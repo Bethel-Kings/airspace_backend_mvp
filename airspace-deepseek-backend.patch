@@ -1,0 +1,372 @@
+diff --git a/.env.example b/.env.example
+index 9d8c348..72d2257 100644
+--- a/.env.example
++++ b/.env.example
+@@ -3,8 +3,12 @@ DATABASE_URL=sqlite:///./airspace.db
+ JWT_SECRET=
+ JWT_EXPIRE_MINUTES=10080
+ CORS_ORIGINS=http://localhost:3000,http://localhost:5173,https://air-space-frontend-nine.vercel.app
++# Chat / reframe / voice replies (DeepSeek, OpenAI-compatible)
++DEEPSEEK_API_KEY=
++DEEPSEEK_BASE_URL=https://api.deepseek.com
++DEEPSEEK_MODEL=deepseek-v4-flash
++# Voice vent speech-to-text only (DeepSeek has no audio API). Leave empty to disable server-side voice.
+ OPENAI_API_KEY=
+-OPENAI_MODEL=gpt-4o-mini
+ OPENAI_TRANSCRIBE_MODEL=gpt-4o-mini-transcribe
+ MAX_AUDIO_BYTES=10485760
+ # Verified support contacts appended to the crisis message (JSON array of resources or plain text)
+diff --git a/AIRSPACE_API_CONTRACT.md b/AIRSPACE_API_CONTRACT.md
+index 32a05b4..9c96a08 100644
+--- a/AIRSPACE_API_CONTRACT.md
++++ b/AIRSPACE_API_CONTRACT.md
+@@ -144,13 +144,13 @@ Fields: `audio` (file: webm, ogg, mp4, m4a, mp3, wav, flac; max 10 MB), `consent
+ ```
+ | `ai_status` | Meaning | What the UI does |
+ |---|---|---|
+-| `unavailable` | No AI key on the server. No transcript. | Fall back to on-device speech recognition and `POST /vent`, or a typing box. |
+-| `consent_required` | Audio would be sent to OpenAI and the user has not opted in. | Show the disclosure, then resend with `consent_to_ai_processing=true`. Re-record is not needed if you kept the blob. |
++| `unavailable` | No transcription key on the server. No transcript. | Fall back to on-device speech recognition and `POST /vent`, or a typing box. |
++| `consent_required` | Audio would be sent to OpenAI (transcription) and the user has not opted in. | Show the disclosure, then resend with `consent_to_ai_processing=true`. Re-record is not needed if you kept the blob. |
+ | `fallback` | Provider failed, or no speech was detected. `transcript` is null. | Say "I couldn't catch that" and offer to retry or type. |
+ | `skipped_for_safety` | Transcript tripped the crisis check. `transcript` is returned so the user sees what was heard; no reply is generated. | Same rule as `/vent`: the safety screen takes over. |
+ | `success` | Transcript returned. `reply` is set only when `reflect=true`; otherwise `acknowledgement` and `reflection_prompts` are set. | Show them. |
+ 
+-Errors: `413` (file too large), `415` (unsupported extension; name the file with the right extension, e.g. `note.webm`), `422` (empty file / bad field), `429` (20 per hour per user). Audio is processed in memory and never stored. The audio and transcript go to OpenAI, so the consent disclosure must say so.
++Errors: `413` (file too large), `415` (unsupported extension; name the file with the right extension, e.g. `note.webm`), `422` (empty file / bad field), `429` (20 per hour per user). Audio is processed in memory and never stored. The audio goes to OpenAI for transcription, and if `reflect=true` the transcript goes to DeepSeek, so the consent disclosure must say so.
+ 
+ ### `POST /api/v1/chat`  (auth)
+ ```json
+@@ -198,7 +198,7 @@ Errors: `413` (file too large), `415` (unsupported extension; name the file with
+ 
+ **Limits:** AI calls (consented requests only) are capped at 30/hour per user; over that, `429`. Crisis and consent responses are never rate limited.
+ 
+-**Consent flow:** the client cannot know in advance whether AI is on. First call with `consent_to_ai_processing: false`. If the response is `consent_required`, show a disclosure that the text is sent to an external provider (OpenAI), then resend only after the user opts in. Never default the flag to `true`.
++**Consent flow:** the client cannot know in advance whether AI is on. First call with `consent_to_ai_processing: false`. If the response is `consent_required`, show a disclosure that the text is sent to an external provider (DeepSeek), then resend only after the user opts in. Never default the flag to `true`.
+ 
+ ### `POST /api/v1/checkins`  (auth)
+ ```json
+diff --git a/README.md b/README.md
+index 05c6463..f0adbc1 100644
+--- a/README.md
++++ b/README.md
+@@ -30,8 +30,10 @@ The API tests use an isolated in-memory SQLite database. They do not replace a d
+ - `DATABASE_URL`: SQLite locally; PostgreSQL in production.
+ - `JWT_SECRET`: a unique random value in production. Production settings reject the placeholder or a secret shorter than 32 characters.
+ - `CORS_ORIGINS`: comma-separated exact frontend origins.
+-- `OPENAI_API_KEY`: optional. When configured, the reframe endpoint requires explicit consent before sending the text to OpenAI.
+-- `OPENAI_MODEL`: a chat model available to your API account.
++- `DEEPSEEK_API_KEY`: optional. When configured, reframe, chat and voice replies require explicit consent before the text is sent to DeepSeek.
++- `DEEPSEEK_MODEL`: default `deepseek-v4-flash` (`deepseek-chat`/`deepseek-reasoner` were retired 2026-07-24). Thinking mode is always disabled.
++- `DEEPSEEK_BASE_URL`: default `https://api.deepseek.com`.
++- `OPENAI_API_KEY`: optional, **speech-to-text only** (DeepSeek has no audio API). Without it, `/vent/voice` returns `unavailable` and the client falls back to on-device recognition.
+ - `OPENAI_TRANSCRIBE_MODEL`: speech-to-text model used by voice vent (default `gpt-4o-mini-transcribe`; `whisper-1` also works).
+ - `MAX_AUDIO_BYTES`: upload cap for voice vent (default 10 MB).
+ - `CRISIS_RESOURCES`: optional, reviewed local support contacts (JSON array of `CrisisResource` objects or plain text) included in safety notices and returned by `/api/v1/crisis-resources`.
+@@ -73,6 +75,6 @@ Both endpoints follow the same rules as `/reframe`: crisis phrases skip the AI e
+ 
+ This is an MVP scaffold, not a clinical tool or a security audit. The phrase detector is a basic routing aid; it can miss risk or flag context incorrectly and cannot determine whether someone is safe. Establish a reviewed safety protocol and appropriate human-support guidance before inviting real users.
+ 
+-Raw vent text is not persisted by this API. If AI reflection is enabled and the user opts in, the submitted text is sent to OpenAI for processing. Check-in notes are stored and may contain sensitive personal information. Do not describe the service as guaranteed confidential, therapy, or an emergency service.
++Raw vent text is not persisted by this API. If AI reflection is enabled and the user opts in, the submitted text is sent to DeepSeek for processing (and, for voice vent, the audio is sent to OpenAI for transcription). Check-in notes are stored and may contain sensitive personal information. Do not describe the service as guaranteed confidential, therapy, or an emergency service.
+ 
+ Rate limiting is in-memory and per-process (fine for one Render instance; move to Redis if you scale out). Before production, add account recovery, email verification where appropriate, Alembic migrations, backups, monitoring that does not log sensitive content, and a review of applicable privacy obligations.
+diff --git a/app/ai.py b/app/ai.py
+index 579ba54..9117f4f 100644
+--- a/app/ai.py
++++ b/app/ai.py
+@@ -36,6 +36,18 @@ class TranscriptionResult:
+ 
+ 
+ def _client():
++    """DeepSeek via its OpenAI-compatible endpoint (text generation)."""
++    from openai import AsyncOpenAI
++    return AsyncOpenAI(
++        api_key=settings.deepseek_api_key,
++        base_url=settings.deepseek_base_url,
++        timeout=30.0,
++        max_retries=1,
++    )
++
++
++def _transcribe_client():
++    """OpenAI, used only for speech-to-text because DeepSeek has no audio API."""
+     from openai import AsyncOpenAI
+     return AsyncOpenAI(api_key=settings.openai_api_key, timeout=30.0, max_retries=1)
+ 
+@@ -50,13 +62,16 @@ def _system_prompt(style: str, *, chat: bool = False, voice: bool = False) -> st
+ 
+ 
+ async def _complete(messages: list[dict], style: str, *, chat: bool = False, voice: bool = False) -> ReflectionResult:
+-    if not settings.openai_api_key:
++    if not settings.ai_enabled:
+         return ReflectionResult(GENERIC_FALLBACK, "unavailable")
+     try:
+         response = await _client().chat.completions.create(
+-            model=settings.openai_model,
++            model=settings.deepseek_model,
+             temperature=0.5,
+             max_tokens=350,
++            # V4 models think by default. Thinking would spend the 350-token budget on hidden
++            # reasoning and require echoing reasoning_content across chat turns, so keep it off.
++            extra_body={"thinking": {"type": "disabled"}},
+             messages=[{"role": "system", "content": _system_prompt(style, chat=chat, voice=voice)}, *messages],
+         )
+         content = (response.choices[0].message.content or "").strip()
+@@ -76,11 +91,11 @@ async def generate_chat_reply(messages: list[dict], style: str) -> ReflectionRes
+ 
+ 
+ async def transcribe_audio(data: bytes, extension: str, content_type: str | None, language: str | None) -> TranscriptionResult:
+-    if not settings.openai_api_key:
++    if not settings.transcription_enabled:
+         return TranscriptionResult(None, "unavailable")
+     try:
+         kwargs = {"language": language} if language else {}
+-        result = await _client().audio.transcriptions.create(
++        result = await _transcribe_client().audio.transcriptions.create(
+             model=settings.openai_transcribe_model,
+             # Client-supplied filenames are never forwarded; only the validated extension is used.
+             file=(f"audio.{extension}", data, content_type or "application/octet-stream"),
+diff --git a/app/config.py b/app/config.py
+index abe836e..5a13dd4 100644
+--- a/app/config.py
++++ b/app/config.py
+@@ -18,8 +18,14 @@ class Settings(BaseSettings):
+     jwt_secret: str | None = None
+     jwt_expire_minutes: int = 60 * 24 * 7
+     cors_origins: str = "http://localhost:3000,http://localhost:5173,https://air-space-frontend-nine.vercel.app"
++    # Chat / reflection / reframe run on DeepSeek (OpenAI-compatible API).
++    deepseek_api_key: str | None = None
++    deepseek_base_url: str = "https://api.deepseek.com"
++    # "deepseek-chat" / "deepseek-reasoner" were retired on 2026-07-24; use the V4 names.
++    deepseek_model: str = "deepseek-v4-flash"
++    # DeepSeek has no speech-to-text API, so voice vent transcription still uses OpenAI.
++    # This key is optional and used for transcription ONLY; without it, voice vent reports "unavailable".
+     openai_api_key: str | None = None
+-    openai_model: str = "gpt-4o-mini"
+     # Speech-to-text model for voice vent (verify it is available to your OpenAI account).
+     openai_transcribe_model: str = "gpt-4o-mini-transcribe"
+     max_audio_bytes: int = 10 * 1024 * 1024  # OpenAI's hard limit is 25 MB; keep ours lower to cap cost
+@@ -29,6 +35,16 @@ class Settings(BaseSettings):
+ 
+     model_config = SettingsConfigDict(env_file=".env", extra="ignore", case_sensitive=False)
+ 
++    @property
++    def ai_enabled(self) -> bool:
++        """Text AI (reframe, chat, voice replies) is available."""
++        return bool(self.deepseek_api_key)
++
++    @property
++    def transcription_enabled(self) -> bool:
++        """Server-side speech-to-text (voice vent) is available."""
++        return bool(self.openai_api_key)
++
+     @model_validator(mode="after")
+     def validate_settings(self):
+         is_prod = self.environment.lower() == "production"
+diff --git a/app/main.py b/app/main.py
+index 417eda7..46451ba 100644
+--- a/app/main.py
++++ b/app/main.py
+@@ -152,11 +152,11 @@ async def reframe(payload: ReframeRequest, request: Request, user: User = Depend
+             safety_notice=get_crisis_message(),
+             crisis_resources=get_crisis_resources(),
+             needs_human_support=True,
+-            ai_enabled=bool(settings.openai_api_key),
++            ai_enabled=settings.ai_enabled,
+             ai_status="skipped_for_safety",
+         )
+ 
+-    if not settings.openai_api_key:
++    if not settings.ai_enabled:
+         # This generic fallback does not use or transmit the submitted text.
+         return ReframeResponse(
+             reflection=GENERIC_FALLBACK,
+@@ -198,8 +198,7 @@ async def vent_voice(
+     language: str | None = Form(None, pattern="^[a-z]{2}$", description="Optional ISO-639-1 hint, e.g. en, ig, yo, ha."),
+     user: User = Depends(current_user),
+ ):
+-    ai_enabled = bool(settings.openai_api_key)
+-    if not ai_enabled:
++    if not settings.transcription_enabled:
+         # No server-side transcription. The client can fall back to on-device speech recognition + POST /vent.
+         return VoiceVentResponse(ai_enabled=False, ai_status="unavailable")
+     if not consent_to_ai_processing:
+@@ -237,7 +236,8 @@ async def vent_voice(
+             ai_enabled=True,
+             ai_status="skipped_for_safety",
+         )
+-    if not reflect:
++    if not reflect or not settings.ai_enabled:
++        # Also taken when no text-AI key is configured: transcript + static prompts, no generated reply.
+         return VoiceVentResponse(
+             transcript=transcript,
+             acknowledgement=VENT_ACKNOWLEDGEMENT,
+@@ -258,10 +258,10 @@ async def chat(payload: ChatRequest, request: Request, user: User = Depends(curr
+             safety_notice=get_crisis_message(),
+             crisis_resources=get_crisis_resources(),
+             needs_human_support=True,
+-            ai_enabled=bool(settings.openai_api_key),
++            ai_enabled=settings.ai_enabled,
+             ai_status="skipped_for_safety",
+         )
+-    if not settings.openai_api_key:
++    if not settings.ai_enabled:
+         return ChatResponse(reply=GENERIC_FALLBACK, ai_enabled=False, ai_status="unavailable")
+     if not payload.consent_to_ai_processing:
+         return ChatResponse(ai_enabled=True, ai_status="consent_required", consent_required=True)
+diff --git a/render.yaml b/render.yaml
+index eed30d8..1c68fd3 100644
+--- a/render.yaml
++++ b/render.yaml
+@@ -14,10 +14,12 @@ services:
+         sync: false
+       - key: CORS_ORIGINS
+         sync: false
++      - key: DEEPSEEK_API_KEY
++        sync: false
++      - key: DEEPSEEK_MODEL
++        value: deepseek-v4-flash
+       - key: OPENAI_API_KEY
+         sync: false
+-      - key: OPENAI_MODEL
+-        value: gpt-4o-mini
+       - key: OPENAI_TRANSCRIBE_MODEL
+         value: gpt-4o-mini-transcribe
+       - key: CRISIS_RESOURCES
+diff --git a/tests/test_ai.py b/tests/test_ai.py
+index e627250..b57e5db 100644
+--- a/tests/test_ai.py
++++ b/tests/test_ai.py
+@@ -31,7 +31,7 @@ def run(coro):
+ 
+ def test_chat_reply_builds_prompt_and_keeps_history(monkeypatch):
+     fake = FakeClient()
+-    monkeypatch.setattr(ai.settings, "openai_api_key", "sk-test")
++    monkeypatch.setattr(ai.settings, "deepseek_api_key", "sk-test")
+     monkeypatch.setattr(ai, "_client", lambda: fake)
+     history = [{"role": "user", "content": "a"}, {"role": "assistant", "content": "b"}, {"role": "user", "content": "c"}]
+     result = run(ai.generate_chat_reply(history, "practical"))
+@@ -40,11 +40,15 @@ def test_chat_reply_builds_prompt_and_keeps_history(monkeypatch):
+     assert sent[0]["role"] == "system" and "not a therapist" in sent[0]["content"]
+     assert "ongoing conversation" in sent[0]["content"] and "small, optional next steps" in sent[0]["content"]
+     assert sent[1:] == history
++    assert fake.calls["chat"]["model"] == ai.settings.deepseek_model
++    assert fake.calls["chat"]["extra_body"] == {"thinking": {"type": "disabled"}}
+ 
+ 
+ def test_provider_failure_returns_generic_fallback_without_leaking(monkeypatch):
++    monkeypatch.setattr(ai.settings, "deepseek_api_key", "sk-test")
+     monkeypatch.setattr(ai.settings, "openai_api_key", "sk-test")
+     monkeypatch.setattr(ai, "_client", lambda: FakeClient(fail=True))
++    monkeypatch.setattr(ai, "_transcribe_client", lambda: FakeClient(fail=True))
+     result = run(ai.generate_chat_reply([{"role": "user", "content": "x"}], "gentle"))
+     assert result.status == "fallback" and "boom" not in result.text
+     assert run(ai.transcribe_audio(b"1", "webm", "audio/webm", None)).status == "fallback"
+@@ -53,7 +57,7 @@ def test_provider_failure_returns_generic_fallback_without_leaking(monkeypatch):
+ def test_transcribe_uses_safe_filename_and_language(monkeypatch):
+     fake = FakeClient()
+     monkeypatch.setattr(ai.settings, "openai_api_key", "sk-test")
+-    monkeypatch.setattr(ai, "_client", lambda: fake)
++    monkeypatch.setattr(ai, "_transcribe_client", lambda: fake)
+     out = run(ai.transcribe_audio(b"abc", "m4a", "audio/mp4", "ig"))
+     assert out.text == "spoken words" and out.status == "success"
+     call = fake.calls["tx"]
+@@ -61,3 +65,18 @@ def test_transcribe_uses_safe_filename_and_language(monkeypatch):
+     assert call["model"] == ai.settings.openai_transcribe_model
+     run(ai.transcribe_audio(b"abc", "webm", None, None))
+     assert "language" not in fake.calls["tx"]
++
++
++def test_clients_target_the_right_providers(monkeypatch):
++    monkeypatch.setattr(ai.settings, "deepseek_api_key", "ds-key")
++    monkeypatch.setattr(ai.settings, "openai_api_key", "oa-key")
++    ds, oa = ai._client(), ai._transcribe_client()
++    assert "deepseek.com" in str(ds.base_url) and ds.api_key == "ds-key"
++    assert "api.openai.com" in str(oa.base_url) and oa.api_key == "oa-key"
++
++
++def test_unavailable_without_keys(monkeypatch):
++    monkeypatch.setattr(ai.settings, "deepseek_api_key", None)
++    monkeypatch.setattr(ai.settings, "openai_api_key", None)
++    assert run(ai.generate_chat_reply([{"role": "user", "content": "x"}], "gentle")).status == "unavailable"
++    assert run(ai.transcribe_audio(b"1", "webm", None, None)).status == "unavailable"
+diff --git a/tests/test_api.py b/tests/test_api.py
+index e37da8a..96808b8 100644
+--- a/tests/test_api.py
++++ b/tests/test_api.py
+@@ -188,11 +188,11 @@ def test_login_per_email_limit_and_generic_error(client):
+ def test_reframe_paths(client, monkeypatch):
+     token = register(client, "ref@example.com")
+     # no AI key
+-    monkeypatch.setattr(main.settings, "openai_api_key", None)
++    monkeypatch.setattr(main.settings, "deepseek_api_key", None)
+     r = client.post("/api/v1/reframe", json={"text": "bad day"}, headers=auth(token)).json()
+     assert r["ai_status"] == "unavailable" and r["ai_enabled"] is False
+     # AI key but no consent
+-    monkeypatch.setattr(main.settings, "openai_api_key", "sk-test")
++    monkeypatch.setattr(main.settings, "deepseek_api_key", "sk-test")
+     r = client.post("/api/v1/reframe", json={"text": "bad day"}, headers=auth(token)).json()
+     assert r["ai_status"] == "consent_required" and r["consent_required"] is True and r["reflection"] is None
+     # consent given, provider mocked
+@@ -214,7 +214,7 @@ def test_reframe_paths(client, monkeypatch):
+ 
+ def test_reframe_ai_calls_are_limited_per_user(client, monkeypatch):
+     token = register(client, "cost@example.com")
+-    monkeypatch.setattr(main.settings, "openai_api_key", "sk-test")
++    monkeypatch.setattr(main.settings, "deepseek_api_key", "sk-test")
+     async def fake(text, style):
+         from app.ai import ReflectionResult
+         return ReflectionResult("ok", "success")
+@@ -317,6 +317,7 @@ def test_voice_vent_unavailable_without_key_and_needs_consent(client, monkeypatc
+ def test_voice_vent_transcribes_and_reflects(client, monkeypatch):
+     token = register(client, "v2@example.com")
+     monkeypatch.setattr(main.settings, "openai_api_key", "sk-test")
++    monkeypatch.setattr(main.settings, "deepseek_api_key", "sk-test")
+     monkeypatch.setattr(main, "transcribe_audio", _fake_transcribe("work was rough today"))
+ 
+     async def fake_reflect(text, style, voice=False):
+@@ -387,10 +388,10 @@ def _msgs(*pairs):
+ def test_chat_paths(client, monkeypatch):
+     token = register(client, "c1@example.com")
+     body = {"messages": _msgs(("user", "rough day"))}
+-    monkeypatch.setattr(main.settings, "openai_api_key", None)
++    monkeypatch.setattr(main.settings, "deepseek_api_key", None)
+     r = client.post("/api/v1/chat", json=body, headers=auth(token)).json()
+     assert r["ai_status"] == "unavailable" and r["ai_enabled"] is False
+-    monkeypatch.setattr(main.settings, "openai_api_key", "sk-test")
++    monkeypatch.setattr(main.settings, "deepseek_api_key", "sk-test")
+     r = client.post("/api/v1/chat", json=body, headers=auth(token)).json()
+     assert r["ai_status"] == "consent_required" and r["reply"] is None
+ 
+@@ -411,7 +412,7 @@ def test_chat_paths(client, monkeypatch):
+ 
+ def test_chat_crisis_anywhere_in_history_skips_provider(client, monkeypatch):
+     token = register(client, "c2@example.com")
+-    monkeypatch.setattr(main.settings, "openai_api_key", "sk-test")
++    monkeypatch.setattr(main.settings, "deepseek_api_key", "sk-test")
+     called = []
+ 
+     async def spy(messages, style):
+@@ -434,7 +435,7 @@ def test_chat_validation_and_limits(client, monkeypatch):
+     assert client.post("/api/v1/chat", json=ends_assistant, headers=h).status_code == 422
+     too_long = {"messages": _msgs(*[("user", "x" * 3900)] * 4)}
+     assert client.post("/api/v1/chat", json=too_long, headers=h).status_code == 422
+-    monkeypatch.setattr(main.settings, "openai_api_key", "sk-test")
++    monkeypatch.setattr(main.settings, "deepseek_api_key", "sk-test")
+ 
+     async def fake(messages, style):
+         from app.ai import ReflectionResult
+@@ -444,3 +445,12 @@ def test_chat_validation_and_limits(client, monkeypatch):
+     body = {"messages": _msgs(("user", "hi")), "consent_to_ai_processing": True}
+     codes = [client.post("/api/v1/chat", json=body, headers=h).status_code for _ in range(61)]
+     assert codes[:60] == [200] * 60 and codes[60] == 429
++
++
++def test_voice_reflect_without_deepseek_key_returns_transcript_only(client, monkeypatch):
++    token = register(client, "v3@example.com")
++    monkeypatch.setattr(main.settings, "openai_api_key", "sk-test")
++    monkeypatch.setattr(main.settings, "deepseek_api_key", None)
++    monkeypatch.setattr(main, "transcribe_audio", _fake_transcribe("hello there"))
++    r = client.post("/api/v1/vent/voice", files=_audio(), data={"consent_to_ai_processing": "true", "reflect": "true"}, headers=auth(token)).json()
++    assert r["transcript"] == "hello there" and r["reply"] is None and r["ai_status"] == "success"
