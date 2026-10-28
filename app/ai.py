@@ -36,6 +36,18 @@ class TranscriptionResult:
 
 
 def _client():
+    """DeepSeek via its OpenAI-compatible endpoint (text generation)."""
+    from openai import AsyncOpenAI
+    return AsyncOpenAI(
+        api_key=settings.deepseek_api_key,
+        base_url=settings.deepseek_base_url,
+        timeout=30.0,
+        max_retries=1,
+    )
+
+
+def _transcribe_client():
+    """OpenAI, used only for speech-to-text because DeepSeek has no audio API."""
     from openai import AsyncOpenAI
     return AsyncOpenAI(api_key=settings.openai_api_key, timeout=30.0, max_retries=1)
 
@@ -50,13 +62,16 @@ def _system_prompt(style: str, *, chat: bool = False, voice: bool = False) -> st
 
 
 async def _complete(messages: list[dict], style: str, *, chat: bool = False, voice: bool = False) -> ReflectionResult:
-    if not settings.openai_api_key:
+    if not settings.ai_enabled:
         return ReflectionResult(GENERIC_FALLBACK, "unavailable")
     try:
         response = await _client().chat.completions.create(
-            model=settings.openai_model,
+            model=settings.deepseek_model,
             temperature=0.5,
             max_tokens=350,
+            # V4 models think by default. Thinking would spend the 350-token budget on hidden
+            # reasoning and require echoing reasoning_content across chat turns, so keep it off.
+            extra_body={"thinking": {"type": "disabled"}},
             messages=[{"role": "system", "content": _system_prompt(style, chat=chat, voice=voice)}, *messages],
         )
         content = (response.choices[0].message.content or "").strip()
@@ -76,11 +91,11 @@ async def generate_chat_reply(messages: list[dict], style: str) -> ReflectionRes
 
 
 async def transcribe_audio(data: bytes, extension: str, content_type: str | None, language: str | None) -> TranscriptionResult:
-    if not settings.openai_api_key:
+    if not settings.transcription_enabled:
         return TranscriptionResult(None, "unavailable")
     try:
         kwargs = {"language": language} if language else {}
-        result = await _client().audio.transcriptions.create(
+        result = await _transcribe_client().audio.transcriptions.create(
             model=settings.openai_transcribe_model,
             # Client-supplied filenames are never forwarded; only the validated extension is used.
             file=(f"audio.{extension}", data, content_type or "application/octet-stream"),

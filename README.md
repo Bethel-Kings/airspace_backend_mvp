@@ -30,8 +30,10 @@ The API tests use an isolated in-memory SQLite database. They do not replace a d
 - `DATABASE_URL`: SQLite locally; PostgreSQL in production.
 - `JWT_SECRET`: a unique random value in production. Production settings reject the placeholder or a secret shorter than 32 characters.
 - `CORS_ORIGINS`: comma-separated exact frontend origins.
-- `OPENAI_API_KEY`: optional. When configured, the reframe endpoint requires explicit consent before sending the text to OpenAI.
-- `OPENAI_MODEL`: a chat model available to your API account.
+- `DEEPSEEK_API_KEY`: optional. When configured, reframe, chat and voice replies require explicit consent before the text is sent to DeepSeek.
+- `DEEPSEEK_MODEL`: default `deepseek-v4-flash` (`deepseek-chat`/`deepseek-reasoner` were retired 2026-07-24). Thinking mode is always disabled.
+- `DEEPSEEK_BASE_URL`: default `https://api.deepseek.com`.
+- `OPENAI_API_KEY`: optional, **speech-to-text only** (DeepSeek has no audio API). Without it, `/vent/voice` returns `unavailable` and the client falls back to on-device recognition.
 - `OPENAI_TRANSCRIBE_MODEL`: speech-to-text model used by voice vent (default `gpt-4o-mini-transcribe`; `whisper-1` also works).
 - `MAX_AUDIO_BYTES`: upload cap for voice vent (default 10 MB).
 - `CRISIS_RESOURCES`: optional, reviewed local support contacts (JSON array of `CrisisResource` objects or plain text) included in safety notices and returned by `/api/v1/crisis-resources`.
@@ -73,6 +75,6 @@ Both endpoints follow the same rules as `/reframe`: crisis phrases skip the AI e
 
 This is an MVP scaffold, not a clinical tool or a security audit. The phrase detector is a basic routing aid; it can miss risk or flag context incorrectly and cannot determine whether someone is safe. Establish a reviewed safety protocol and appropriate human-support guidance before inviting real users.
 
-Raw vent text is not persisted by this API. If AI reflection is enabled and the user opts in, the submitted text is sent to OpenAI for processing. Check-in notes are stored and may contain sensitive personal information. Do not describe the service as guaranteed confidential, therapy, or an emergency service.
+Raw vent text is not persisted by this API. If AI reflection is enabled and the user opts in, the submitted text is sent to DeepSeek for processing (and, for voice vent, the audio is sent to OpenAI for transcription). Check-in notes are stored and may contain sensitive personal information. Do not describe the service as guaranteed confidential, therapy, or an emergency service.
 
 Rate limiting is in-memory and per-process (fine for one Render instance; move to Redis if you scale out). Before production, add account recovery, email verification where appropriate, Alembic migrations, backups, monitoring that does not log sensitive content, and a review of applicable privacy obligations.

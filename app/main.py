@@ -152,11 +152,11 @@ async def reframe(payload: ReframeRequest, request: Request, user: User = Depend
             safety_notice=get_crisis_message(),
             crisis_resources=get_crisis_resources(),
             needs_human_support=True,
-            ai_enabled=bool(settings.openai_api_key),
+            ai_enabled=settings.ai_enabled,
             ai_status="skipped_for_safety",
         )
 
-    if not settings.openai_api_key:
+    if not settings.ai_enabled:
         # This generic fallback does not use or transmit the submitted text.
         return ReframeResponse(
             reflection=GENERIC_FALLBACK,
@@ -198,8 +198,7 @@ async def vent_voice(
     language: str | None = Form(None, pattern="^[a-z]{2}$", description="Optional ISO-639-1 hint, e.g. en, ig, yo, ha."),
     user: User = Depends(current_user),
 ):
-    ai_enabled = bool(settings.openai_api_key)
-    if not ai_enabled:
+    if not settings.transcription_enabled:
         # No server-side transcription. The client can fall back to on-device speech recognition + POST /vent.
         return VoiceVentResponse(ai_enabled=False, ai_status="unavailable")
     if not consent_to_ai_processing:
@@ -237,7 +236,8 @@ async def vent_voice(
             ai_enabled=True,
             ai_status="skipped_for_safety",
         )
-    if not reflect:
+    if not reflect or not settings.ai_enabled:
+        # Also taken when no text-AI key is configured: transcript + static prompts, no generated reply.
         return VoiceVentResponse(
             transcript=transcript,
             acknowledgement=VENT_ACKNOWLEDGEMENT,
@@ -258,10 +258,10 @@ async def chat(payload: ChatRequest, request: Request, user: User = Depends(curr
             safety_notice=get_crisis_message(),
             crisis_resources=get_crisis_resources(),
             needs_human_support=True,
-            ai_enabled=bool(settings.openai_api_key),
+            ai_enabled=settings.ai_enabled,
             ai_status="skipped_for_safety",
         )
-    if not settings.openai_api_key:
+    if not settings.ai_enabled:
         return ChatResponse(reply=GENERIC_FALLBACK, ai_enabled=False, ai_status="unavailable")
     if not payload.consent_to_ai_processing:
         return ChatResponse(ai_enabled=True, ai_status="consent_required", consent_required=True)

@@ -18,8 +18,14 @@ class Settings(BaseSettings):
     jwt_secret: str | None = None
     jwt_expire_minutes: int = 60 * 24 * 7
     cors_origins: str = "http://localhost:3000,http://localhost:5173,https://air-space-frontend-nine.vercel.app"
+    # Chat / reflection / reframe run on DeepSeek (OpenAI-compatible API).
+    deepseek_api_key: str | None = None
+    deepseek_base_url: str = "https://api.deepseek.com"
+    # "deepseek-chat" / "deepseek-reasoner" were retired on 2026-07-24; use the V4 names.
+    deepseek_model: str = "deepseek-v4-flash"
+    # DeepSeek has no speech-to-text API, so voice vent transcription still uses OpenAI.
+    # This key is optional and used for transcription ONLY; without it, voice vent reports "unavailable".
     openai_api_key: str | None = None
-    openai_model: str = "gpt-4o-mini"
     # Speech-to-text model for voice vent (verify it is available to your OpenAI account).
     openai_transcribe_model: str = "gpt-4o-mini-transcribe"
     max_audio_bytes: int = 10 * 1024 * 1024  # OpenAI's hard limit is 25 MB; keep ours lower to cap cost
@@ -28,6 +34,16 @@ class Settings(BaseSettings):
     crisis_resources: str = ""
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore", case_sensitive=False)
+
+    @property
+    def ai_enabled(self) -> bool:
+        """Text AI (reframe, chat, voice replies) is available."""
+        return bool(self.deepseek_api_key)
+
+    @property
+    def transcription_enabled(self) -> bool:
+        """Server-side speech-to-text (voice vent) is available."""
+        return bool(self.openai_api_key)
 
     @model_validator(mode="after")
     def validate_settings(self):

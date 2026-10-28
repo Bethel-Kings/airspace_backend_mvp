@@ -188,11 +188,11 @@ def test_login_per_email_limit_and_generic_error(client):
 def test_reframe_paths(client, monkeypatch):
     token = register(client, "ref@example.com")
     # no AI key
-    monkeypatch.setattr(main.settings, "openai_api_key", None)
+    monkeypatch.setattr(main.settings, "deepseek_api_key", None)
     r = client.post("/api/v1/reframe", json={"text": "bad day"}, headers=auth(token)).json()
     assert r["ai_status"] == "unavailable" and r["ai_enabled"] is False
     # AI key but no consent
-    monkeypatch.setattr(main.settings, "openai_api_key", "sk-test")
+    monkeypatch.setattr(main.settings, "deepseek_api_key", "sk-test")
     r = client.post("/api/v1/reframe", json={"text": "bad day"}, headers=auth(token)).json()
     assert r["ai_status"] == "consent_required" and r["consent_required"] is True and r["reflection"] is None
     # consent given, provider mocked
@@ -214,7 +214,7 @@ def test_reframe_paths(client, monkeypatch):
 
 def test_reframe_ai_calls_are_limited_per_user(client, monkeypatch):
     token = register(client, "cost@example.com")
-    monkeypatch.setattr(main.settings, "openai_api_key", "sk-test")
+    monkeypatch.setattr(main.settings, "deepseek_api_key", "sk-test")
     async def fake(text, style):
         from app.ai import ReflectionResult
         return ReflectionResult("ok", "success")
@@ -317,6 +317,7 @@ def test_voice_vent_unavailable_without_key_and_needs_consent(client, monkeypatc
 def test_voice_vent_transcribes_and_reflects(client, monkeypatch):
     token = register(client, "v2@example.com")
     monkeypatch.setattr(main.settings, "openai_api_key", "sk-test")
+    monkeypatch.setattr(main.settings, "deepseek_api_key", "sk-test")
     monkeypatch.setattr(main, "transcribe_audio", _fake_transcribe("work was rough today"))
 
     async def fake_reflect(text, style, voice=False):
@@ -387,10 +388,10 @@ def _msgs(*pairs):
 def test_chat_paths(client, monkeypatch):
     token = register(client, "c1@example.com")
     body = {"messages": _msgs(("user", "rough day"))}
-    monkeypatch.setattr(main.settings, "openai_api_key", None)
+    monkeypatch.setattr(main.settings, "deepseek_api_key", None)
     r = client.post("/api/v1/chat", json=body, headers=auth(token)).json()
     assert r["ai_status"] == "unavailable" and r["ai_enabled"] is False
-    monkeypatch.setattr(main.settings, "openai_api_key", "sk-test")
+    monkeypatch.setattr(main.settings, "deepseek_api_key", "sk-test")
     r = client.post("/api/v1/chat", json=body, headers=auth(token)).json()
     assert r["ai_status"] == "consent_required" and r["reply"] is None
 
@@ -411,7 +412,7 @@ def test_chat_paths(client, monkeypatch):
 
 def test_chat_crisis_anywhere_in_history_skips_provider(client, monkeypatch):
     token = register(client, "c2@example.com")
-    monkeypatch.setattr(main.settings, "openai_api_key", "sk-test")
+    monkeypatch.setattr(main.settings, "deepseek_api_key", "sk-test")
     called = []
 
     async def spy(messages, style):
@@ -434,7 +435,7 @@ def test_chat_validation_and_limits(client, monkeypatch):
     assert client.post("/api/v1/chat", json=ends_assistant, headers=h).status_code == 422
     too_long = {"messages": _msgs(*[("user", "x" * 3900)] * 4)}
     assert client.post("/api/v1/chat", json=too_long, headers=h).status_code == 422
-    monkeypatch.setattr(main.settings, "openai_api_key", "sk-test")
+    monkeypatch.setattr(main.settings, "deepseek_api_key", "sk-test")
 
     async def fake(messages, style):
         from app.ai import ReflectionResult
@@ -444,3 +445,12 @@ def test_chat_validation_and_limits(client, monkeypatch):
     body = {"messages": _msgs(("user", "hi")), "consent_to_ai_processing": True}
     codes = [client.post("/api/v1/chat", json=body, headers=h).status_code for _ in range(61)]
     assert codes[:60] == [200] * 60 and codes[60] == 429
+
+
+def test_voice_reflect_without_deepseek_key_returns_transcript_only(client, monkeypatch):
+    token = register(client, "v3@example.com")
+    monkeypatch.setattr(main.settings, "openai_api_key", "sk-test")
+    monkeypatch.setattr(main.settings, "deepseek_api_key", None)
+    monkeypatch.setattr(main, "transcribe_audio", _fake_transcribe("hello there"))
+    r = client.post("/api/v1/vent/voice", files=_audio(), data={"consent_to_ai_processing": "true", "reflect": "true"}, headers=auth(token)).json()
+    assert r["transcript"] == "hello there" and r["reply"] is None and r["ai_status"] == "success"

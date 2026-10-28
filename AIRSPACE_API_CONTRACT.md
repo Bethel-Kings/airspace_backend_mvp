@@ -144,13 +144,13 @@ Fields: `audio` (file: webm, ogg, mp4, m4a, mp3, wav, flac; max 10 MB), `consent
 ```
 | `ai_status` | Meaning | What the UI does |
 |---|---|---|
-| `unavailable` | No AI key on the server. No transcript. | Fall back to on-device speech recognition and `POST /vent`, or a typing box. |
-| `consent_required` | Audio would be sent to OpenAI and the user has not opted in. | Show the disclosure, then resend with `consent_to_ai_processing=true`. Re-record is not needed if you kept the blob. |
+| `unavailable` | No transcription key on the server. No transcript. | Fall back to on-device speech recognition and `POST /vent`, or a typing box. |
+| `consent_required` | Audio would be sent to OpenAI (transcription) and the user has not opted in. | Show the disclosure, then resend with `consent_to_ai_processing=true`. Re-record is not needed if you kept the blob. |
 | `fallback` | Provider failed, or no speech was detected. `transcript` is null. | Say "I couldn't catch that" and offer to retry or type. |
 | `skipped_for_safety` | Transcript tripped the crisis check. `transcript` is returned so the user sees what was heard; no reply is generated. | Same rule as `/vent`: the safety screen takes over. |
 | `success` | Transcript returned. `reply` is set only when `reflect=true`; otherwise `acknowledgement` and `reflection_prompts` are set. | Show them. |
 
-Errors: `413` (file too large), `415` (unsupported extension; name the file with the right extension, e.g. `note.webm`), `422` (empty file / bad field), `429` (20 per hour per user). Audio is processed in memory and never stored. The audio and transcript go to OpenAI, so the consent disclosure must say so.
+Errors: `413` (file too large), `415` (unsupported extension; name the file with the right extension, e.g. `note.webm`), `422` (empty file / bad field), `429` (20 per hour per user). Audio is processed in memory and never stored. The audio goes to OpenAI for transcription, and if `reflect=true` the transcript goes to DeepSeek, so the consent disclosure must say so.
 
 ### `POST /api/v1/chat`  (auth)
 ```json
@@ -198,7 +198,7 @@ Errors: `413` (file too large), `415` (unsupported extension; name the file with
 
 **Limits:** AI calls (consented requests only) are capped at 30/hour per user; over that, `429`. Crisis and consent responses are never rate limited.
 
-**Consent flow:** the client cannot know in advance whether AI is on. First call with `consent_to_ai_processing: false`. If the response is `consent_required`, show a disclosure that the text is sent to an external provider (OpenAI), then resend only after the user opts in. Never default the flag to `true`.
+**Consent flow:** the client cannot know in advance whether AI is on. First call with `consent_to_ai_processing: false`. If the response is `consent_required`, show a disclosure that the text is sent to an external provider (DeepSeek), then resend only after the user opts in. Never default the flag to `true`.
 
 ### `POST /api/v1/checkins`  (auth)
 ```json
