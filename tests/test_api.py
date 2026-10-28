@@ -306,17 +306,17 @@ def test_voice_vent_requires_login(client):
 
 def test_voice_vent_unavailable_without_key_and_needs_consent(client, monkeypatch):
     token = register(client, "v1@example.com")
-    monkeypatch.setattr(main.settings, "openai_api_key", None)
+    monkeypatch.setattr(main.settings, "elevenlabs_api_key", None)
     r = client.post("/api/v1/vent/voice", files=_audio(), headers=auth(token)).json()
     assert r["ai_status"] == "unavailable" and r["transcript"] is None
-    monkeypatch.setattr(main.settings, "openai_api_key", "sk-test")
+    monkeypatch.setattr(main.settings, "elevenlabs_api_key", "sk-test")
     r = client.post("/api/v1/vent/voice", files=_audio(), headers=auth(token)).json()
     assert r["ai_status"] == "consent_required" and r["consent_required"] is True
 
 
 def test_voice_vent_transcribes_and_reflects(client, monkeypatch):
     token = register(client, "v2@example.com")
-    monkeypatch.setattr(main.settings, "openai_api_key", "sk-test")
+    monkeypatch.setattr(main.settings, "elevenlabs_api_key", "sk-test")
     monkeypatch.setattr(main.settings, "deepseek_api_key", "sk-test")
     monkeypatch.setattr(main, "transcribe_audio", _fake_transcribe("work was rough today"))
 
@@ -336,7 +336,7 @@ def test_voice_vent_transcribes_and_reflects(client, monkeypatch):
 
 def test_voice_vent_crisis_transcript_never_reaches_reflection(client, monkeypatch):
     token = register(client, "v3@example.com")
-    monkeypatch.setattr(main.settings, "openai_api_key", "sk-test")
+    monkeypatch.setattr(main.settings, "elevenlabs_api_key", "sk-test")
     monkeypatch.setattr(main, "transcribe_audio", _fake_transcribe("I want to die"))
     called = []
 
@@ -352,7 +352,7 @@ def test_voice_vent_crisis_transcript_never_reaches_reflection(client, monkeypat
 
 def test_voice_vent_validation_and_failures(client, monkeypatch):
     token = register(client, "v4@example.com")
-    monkeypatch.setattr(main.settings, "openai_api_key", "sk-test")
+    monkeypatch.setattr(main.settings, "elevenlabs_api_key", "sk-test")
     form = {"consent_to_ai_processing": "true"}
     bad_ext = client.post("/api/v1/vent/voice", files=_audio("x.exe"), data=form, headers=auth(token))
     assert bad_ext.status_code == 415
@@ -372,7 +372,7 @@ def test_voice_vent_validation_and_failures(client, monkeypatch):
 
 def test_voice_vent_is_rate_limited(client, monkeypatch):
     token = register(client, "v5@example.com")
-    monkeypatch.setattr(main.settings, "openai_api_key", "sk-test")
+    monkeypatch.setattr(main.settings, "elevenlabs_api_key", "sk-test")
     monkeypatch.setattr(main, "transcribe_audio", _fake_transcribe("hello"))
     form = {"consent_to_ai_processing": "true"}
     codes = [client.post("/api/v1/vent/voice", files=_audio(), data=form, headers=auth(token)).status_code
@@ -449,7 +449,7 @@ def test_chat_validation_and_limits(client, monkeypatch):
 
 def test_voice_reflect_without_deepseek_key_returns_transcript_only(client, monkeypatch):
     token = register(client, "v3@example.com")
-    monkeypatch.setattr(main.settings, "openai_api_key", "sk-test")
+    monkeypatch.setattr(main.settings, "elevenlabs_api_key", "sk-test")
     monkeypatch.setattr(main.settings, "deepseek_api_key", None)
     monkeypatch.setattr(main, "transcribe_audio", _fake_transcribe("hello there"))
     r = client.post("/api/v1/vent/voice", files=_audio(), data={"consent_to_ai_processing": "true", "reflect": "true"}, headers=auth(token)).json()

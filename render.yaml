@@ -18,9 +18,9 @@ services:
         sync: false
       - key: DEEPSEEK_MODEL
         value: deepseek-v4-flash
-      - key: OPENAI_API_KEY
+      - key: ELEVENLABS_API_KEY
         sync: false
-      - key: OPENAI_TRANSCRIBE_MODEL
-        value: gpt-4o-mini-transcribe
+      - key: ELEVENLABS_STT_MODEL
+        value: scribe_v2
       - key: CRISIS_RESOURCES
         sync: false

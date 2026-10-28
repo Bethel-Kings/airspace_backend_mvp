@@ -1,0 +1,18 @@
+diff --git a/src/routes/Write.tsx b/src/routes/Write.tsx
+index 46b450d..6cd0074 100644
+--- a/src/routes/Write.tsx
++++ b/src/routes/Write.tsx
+@@ -388,9 +388,11 @@ export default function WritePage() {
+                     className="mt-0.5"
+                   />
+                   <span>
+-                    I consent to AI processing of my text for a more personalised reflection.{" "}
++                    I consent to my text being sent to DeepSeek, an external AI provider, to
++                    generate a more personalised reflection.{" "}
+                     <span className="text-primary">
+-                      (Your raw words are never stored or used for training.)
++                      (AirSpace does not store your words. DeepSeek handles the text under its
++                      own terms and privacy policy.)
+                     </span>
+                   </span>
+                 </label>

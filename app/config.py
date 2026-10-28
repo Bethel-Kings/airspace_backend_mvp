@@ -23,12 +23,12 @@ class Settings(BaseSettings):
     deepseek_base_url: str = "https://api.deepseek.com"
     # "deepseek-chat" / "deepseek-reasoner" were retired on 2026-07-24; use the V4 names.
     deepseek_model: str = "deepseek-v4-flash"
-    # DeepSeek has no speech-to-text API, so voice vent transcription still uses OpenAI.
-    # This key is optional and used for transcription ONLY; without it, voice vent reports "unavailable".
-    openai_api_key: str | None = None
-    # Speech-to-text model for voice vent (verify it is available to your OpenAI account).
-    openai_transcribe_model: str = "gpt-4o-mini-transcribe"
-    max_audio_bytes: int = 10 * 1024 * 1024  # OpenAI's hard limit is 25 MB; keep ours lower to cap cost
+    # DeepSeek has no speech-to-text API, so voice vent transcription uses ElevenLabs Scribe.
+    # Optional; without this key, voice vent reports "unavailable" and the client falls back to on-device speech recognition.
+    elevenlabs_api_key: str | None = None
+    elevenlabs_base_url: str = "https://api.elevenlabs.io"
+    elevenlabs_stt_model: str = "scribe_v2"
+    max_audio_bytes: int = 10 * 1024 * 1024  # keep uploads small to cap cost and memory
     # Verified local support contacts appended to the crisis message
     # (can be a JSON array of CrisisResource objects, or plain text contacts).
     crisis_resources: str = ""
@@ -43,7 +43,7 @@ class Settings(BaseSettings):
     @property
     def transcription_enabled(self) -> bool:
         """Server-side speech-to-text (voice vent) is available."""
-        return bool(self.openai_api_key)
+        return bool(self.elevenlabs_api_key)
 
     @model_validator(mode="after")
     def validate_settings(self):

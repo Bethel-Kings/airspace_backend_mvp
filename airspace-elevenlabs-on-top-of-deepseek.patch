@@ -1,0 +1,353 @@
+diff --git a/.env.example b/.env.example
+index 72d2257..3e06172 100644
+--- a/.env.example
++++ b/.env.example
+@@ -7,9 +7,9 @@ CORS_ORIGINS=http://localhost:3000,http://localhost:5173,https://air-space-front
+ DEEPSEEK_API_KEY=
+ DEEPSEEK_BASE_URL=https://api.deepseek.com
+ DEEPSEEK_MODEL=deepseek-v4-flash
+-# Voice vent speech-to-text only (DeepSeek has no audio API). Leave empty to disable server-side voice.
+-OPENAI_API_KEY=
+-OPENAI_TRANSCRIBE_MODEL=gpt-4o-mini-transcribe
++# Voice vent speech-to-text (ElevenLabs Scribe; DeepSeek has no audio API). Leave empty to disable server-side voice.
++ELEVENLABS_API_KEY=
++ELEVENLABS_STT_MODEL=scribe_v2
+ MAX_AUDIO_BYTES=10485760
+ # Verified support contacts appended to the crisis message (JSON array of resources or plain text)
+ CRISIS_RESOURCES='[{"name":"MANI (Mentally Aware Nigeria Initiative)","phone":"08091116264","alt_phone":"08111680686","hours":"24/7","description":"Free, confidential emotional support for anxiety, depression, and suicidal thoughts.","url":"https://mentallyaware.org"},{"name":"SURPIN (Suicide Research & Prevention Initiative)","phone":"08000787746","alt_phone":"09034400009","hours":"24/7","description":"Nationwide crisis intervention; counsellors speak major Nigerian languages.","url":"https://surpin.org"},{"name":"Safe Place Nigeria (She Writes Woman)","phone":"08008002000","hours":"24/7","description":"National toll-free crisis line with free tele-therapy referrals.","url":"https://shewriteswoman.org"},{"name":"Lagos Lifeline","phone":"07000006463","hours":"24/7","description":"Lagos State line connecting callers to psychiatric professionals.","url":"https://lagosstate.gov.ng"},{"name":"Emergency Services","phone":"112","hours":"24/7","description":"National emergency number. In Lagos, dial 767.","url":""}]'
+diff --git a/AIRSPACE_API_CONTRACT.md b/AIRSPACE_API_CONTRACT.md
+index 9c96a08..e46d150 100644
+--- a/AIRSPACE_API_CONTRACT.md
++++ b/AIRSPACE_API_CONTRACT.md
+@@ -145,12 +145,12 @@ Fields: `audio` (file: webm, ogg, mp4, m4a, mp3, wav, flac; max 10 MB), `consent
+ | `ai_status` | Meaning | What the UI does |
+ |---|---|---|
+ | `unavailable` | No transcription key on the server. No transcript. | Fall back to on-device speech recognition and `POST /vent`, or a typing box. |
+-| `consent_required` | Audio would be sent to OpenAI (transcription) and the user has not opted in. | Show the disclosure, then resend with `consent_to_ai_processing=true`. Re-record is not needed if you kept the blob. |
++| `consent_required` | Audio would be sent to ElevenLabs (transcription) and the user has not opted in. | Show the disclosure, then resend with `consent_to_ai_processing=true`. Re-record is not needed if you kept the blob. |
+ | `fallback` | Provider failed, or no speech was detected. `transcript` is null. | Say "I couldn't catch that" and offer to retry or type. |
+ | `skipped_for_safety` | Transcript tripped the crisis check. `transcript` is returned so the user sees what was heard; no reply is generated. | Same rule as `/vent`: the safety screen takes over. |
+ | `success` | Transcript returned. `reply` is set only when `reflect=true`; otherwise `acknowledgement` and `reflection_prompts` are set. | Show them. |
+ 
+-Errors: `413` (file too large), `415` (unsupported extension; name the file with the right extension, e.g. `note.webm`), `422` (empty file / bad field), `429` (20 per hour per user). Audio is processed in memory and never stored. The audio goes to OpenAI for transcription, and if `reflect=true` the transcript goes to DeepSeek, so the consent disclosure must say so.
++Errors: `413` (file too large), `415` (unsupported extension; name the file with the right extension, e.g. `note.webm`), `422` (empty file / bad field), `429` (20 per hour per user). Audio is processed in memory and never stored. The audio goes to ElevenLabs for transcription, and if `reflect=true` the transcript goes to DeepSeek, so the consent disclosure must say so.
+ 
+ ### `POST /api/v1/chat`  (auth)
+ ```json
+diff --git a/README.md b/README.md
+index f0adbc1..cff4980 100644
+--- a/README.md
++++ b/README.md
+@@ -33,8 +33,8 @@ The API tests use an isolated in-memory SQLite database. They do not replace a d
+ - `DEEPSEEK_API_KEY`: optional. When configured, reframe, chat and voice replies require explicit consent before the text is sent to DeepSeek.
+ - `DEEPSEEK_MODEL`: default `deepseek-v4-flash` (`deepseek-chat`/`deepseek-reasoner` were retired 2026-07-24). Thinking mode is always disabled.
+ - `DEEPSEEK_BASE_URL`: default `https://api.deepseek.com`.
+-- `OPENAI_API_KEY`: optional, **speech-to-text only** (DeepSeek has no audio API). Without it, `/vent/voice` returns `unavailable` and the client falls back to on-device recognition.
+-- `OPENAI_TRANSCRIBE_MODEL`: speech-to-text model used by voice vent (default `gpt-4o-mini-transcribe`; `whisper-1` also works).
++- `ELEVENLABS_API_KEY`: optional, **speech-to-text only** (DeepSeek has no audio API). Without it, `/vent/voice` returns `unavailable` and the client falls back to on-device recognition.
++- `ELEVENLABS_STT_MODEL`: default `scribe_v2`.
+ - `MAX_AUDIO_BYTES`: upload cap for voice vent (default 10 MB).
+ - `CRISIS_RESOURCES`: optional, reviewed local support contacts (JSON array of `CrisisResource` objects or plain text) included in safety notices and returned by `/api/v1/crisis-resources`.
+ 
+@@ -75,6 +75,6 @@ Both endpoints follow the same rules as `/reframe`: crisis phrases skip the AI e
+ 
+ This is an MVP scaffold, not a clinical tool or a security audit. The phrase detector is a basic routing aid; it can miss risk or flag context incorrectly and cannot determine whether someone is safe. Establish a reviewed safety protocol and appropriate human-support guidance before inviting real users.
+ 
+-Raw vent text is not persisted by this API. If AI reflection is enabled and the user opts in, the submitted text is sent to DeepSeek for processing (and, for voice vent, the audio is sent to OpenAI for transcription). Check-in notes are stored and may contain sensitive personal information. Do not describe the service as guaranteed confidential, therapy, or an emergency service.
++Raw vent text is not persisted by this API. If AI reflection is enabled and the user opts in, the submitted text is sent to DeepSeek for processing (and, for voice vent, the audio is sent to ElevenLabs for transcription). Check-in notes are stored and may contain sensitive personal information. Do not describe the service as guaranteed confidential, therapy, or an emergency service.
+ 
+ Rate limiting is in-memory and per-process (fine for one Render instance; move to Redis if you scale out). Before production, add account recovery, email verification where appropriate, Alembic migrations, backups, monitoring that does not log sensitive content, and a review of applicable privacy obligations.
+diff --git a/app/ai.py b/app/ai.py
+index 9117f4f..ef2658b 100644
+--- a/app/ai.py
++++ b/app/ai.py
+@@ -1,4 +1,7 @@
+ from dataclasses import dataclass
++
++import httpx
++
+ from app.config import settings
+ 
+ STYLE_INSTRUCTIONS = {
+@@ -46,10 +49,13 @@ def _client():
+     )
+ 
+ 
+-def _transcribe_client():
+-    """OpenAI, used only for speech-to-text because DeepSeek has no audio API."""
+-    from openai import AsyncOpenAI
+-    return AsyncOpenAI(api_key=settings.openai_api_key, timeout=30.0, max_retries=1)
++def _transcribe_client() -> httpx.AsyncClient:
++    """ElevenLabs Scribe (speech-to-text). DeepSeek has no audio API."""
++    return httpx.AsyncClient(
++        base_url=settings.elevenlabs_base_url,
++        headers={"xi-api-key": settings.elevenlabs_api_key or ""},
++        timeout=30.0,
++    )
+ 
+ 
+ def _system_prompt(style: str, *, chat: bool = False, voice: bool = False) -> str:
+@@ -93,14 +99,30 @@ async def generate_chat_reply(messages: list[dict], style: str) -> ReflectionRes
+ async def transcribe_audio(data: bytes, extension: str, content_type: str | None, language: str | None) -> TranscriptionResult:
+     if not settings.transcription_enabled:
+         return TranscriptionResult(None, "unavailable")
+-    try:
+-        kwargs = {"language": language} if language else {}
+-        result = await _transcribe_client().audio.transcriptions.create(
+-            model=settings.openai_transcribe_model,
++
++    async def attempt(client: httpx.AsyncClient, language_code: str | None) -> httpx.Response:
++        form = {
++            "model_id": settings.elevenlabs_stt_model,
++            # Keep the transcript to spoken words only (no "(laughter)" style tags).
++            "tag_audio_events": "false",
++        }
++        if language_code:
++            form["language_code"] = language_code
++        return await client.post(
++            "/v1/speech-to-text",
++            data=form,
+             # Client-supplied filenames are never forwarded; only the validated extension is used.
+-            file=(f"audio.{extension}", data, content_type or "application/octet-stream"),
+-            **kwargs,
++            files={"file": (f"audio.{extension}", data, content_type or "application/octet-stream")},
+         )
+-        return TranscriptionResult((getattr(result, "text", "") or "").strip(), "success")
++
++    try:
++        async with _transcribe_client() as client:
++            response = await attempt(client, language)
++            if language and response.status_code in (400, 422):
++                # The language hint may not be supported by the model; retry with auto-detection.
++                response = await attempt(client, None)
++            response.raise_for_status()
++            return TranscriptionResult((response.json().get("text") or "").strip(), "success")
+     except Exception:
++        # Never log audio or transcripts, and never expose provider errors to the client.
+         return TranscriptionResult(None, "fallback")
+diff --git a/app/config.py b/app/config.py
+index 5a13dd4..6c63e4d 100644
+--- a/app/config.py
++++ b/app/config.py
+@@ -23,12 +23,12 @@ class Settings(BaseSettings):
+     deepseek_base_url: str = "https://api.deepseek.com"
+     # "deepseek-chat" / "deepseek-reasoner" were retired on 2026-07-24; use the V4 names.
+     deepseek_model: str = "deepseek-v4-flash"
+-    # DeepSeek has no speech-to-text API, so voice vent transcription still uses OpenAI.
+-    # This key is optional and used for transcription ONLY; without it, voice vent reports "unavailable".
+-    openai_api_key: str | None = None
+-    # Speech-to-text model for voice vent (verify it is available to your OpenAI account).
+-    openai_transcribe_model: str = "gpt-4o-mini-transcribe"
+-    max_audio_bytes: int = 10 * 1024 * 1024  # OpenAI's hard limit is 25 MB; keep ours lower to cap cost
++    # DeepSeek has no speech-to-text API, so voice vent transcription uses ElevenLabs Scribe.
++    # Optional; without this key, voice vent reports "unavailable" and the client falls back to on-device speech recognition.
++    elevenlabs_api_key: str | None = None
++    elevenlabs_base_url: str = "https://api.elevenlabs.io"
++    elevenlabs_stt_model: str = "scribe_v2"
++    max_audio_bytes: int = 10 * 1024 * 1024  # keep uploads small to cap cost and memory
+     # Verified local support contacts appended to the crisis message
+     # (can be a JSON array of CrisisResource objects, or plain text contacts).
+     crisis_resources: str = ""
+@@ -43,7 +43,7 @@ class Settings(BaseSettings):
+     @property
+     def transcription_enabled(self) -> bool:
+         """Server-side speech-to-text (voice vent) is available."""
+-        return bool(self.openai_api_key)
++        return bool(self.elevenlabs_api_key)
+ 
+     @model_validator(mode="after")
+     def validate_settings(self):
+diff --git a/render.yaml b/render.yaml
+index 1c68fd3..461f957 100644
+--- a/render.yaml
++++ b/render.yaml
+@@ -18,9 +18,9 @@ services:
+         sync: false
+       - key: DEEPSEEK_MODEL
+         value: deepseek-v4-flash
+-      - key: OPENAI_API_KEY
++      - key: ELEVENLABS_API_KEY
+         sync: false
+-      - key: OPENAI_TRANSCRIBE_MODEL
+-        value: gpt-4o-mini-transcribe
++      - key: ELEVENLABS_STT_MODEL
++        value: scribe_v2
+       - key: CRISIS_RESOURCES
+         sync: false
+diff --git a/tests/test_ai.py b/tests/test_ai.py
+index b57e5db..a7c11fd 100644
+--- a/tests/test_ai.py
++++ b/tests/test_ai.py
+@@ -1,4 +1,6 @@
+ import asyncio
++
++import httpx
+ from types import SimpleNamespace
+ 
+ from app import ai
+@@ -9,7 +11,6 @@ class FakeClient:
+         self.calls = {}
+         self.fail = fail
+         self.chat = SimpleNamespace(completions=SimpleNamespace(create=self._chat))
+-        self.audio = SimpleNamespace(transcriptions=SimpleNamespace(create=self._tx))
+ 
+     async def _chat(self, **kw):
+         if self.fail:
+@@ -18,12 +19,6 @@ class FakeClient:
+         msg = SimpleNamespace(content="  a reply  ")
+         return SimpleNamespace(choices=[SimpleNamespace(message=msg)])
+ 
+-    async def _tx(self, **kw):
+-        if self.fail:
+-            raise RuntimeError("boom")
+-        self.calls["tx"] = kw
+-        return SimpleNamespace(text="  spoken words ")
+-
+ 
+ def run(coro):
+     return asyncio.run(coro)
+@@ -46,37 +41,68 @@ def test_chat_reply_builds_prompt_and_keeps_history(monkeypatch):
+ 
+ def test_provider_failure_returns_generic_fallback_without_leaking(monkeypatch):
+     monkeypatch.setattr(ai.settings, "deepseek_api_key", "sk-test")
+-    monkeypatch.setattr(ai.settings, "openai_api_key", "sk-test")
++    monkeypatch.setattr(ai.settings, "elevenlabs_api_key", "xi-test")
+     monkeypatch.setattr(ai, "_client", lambda: FakeClient(fail=True))
+-    monkeypatch.setattr(ai, "_transcribe_client", lambda: FakeClient(fail=True))
++    monkeypatch.setattr(ai, "_transcribe_client", lambda: _stt_client(lambda req: httpx.Response(500)))
+     result = run(ai.generate_chat_reply([{"role": "user", "content": "x"}], "gentle"))
+     assert result.status == "fallback" and "boom" not in result.text
+     assert run(ai.transcribe_audio(b"1", "webm", "audio/webm", None)).status == "fallback"
+ 
+ 
+-def test_transcribe_uses_safe_filename_and_language(monkeypatch):
+-    fake = FakeClient()
+-    monkeypatch.setattr(ai.settings, "openai_api_key", "sk-test")
+-    monkeypatch.setattr(ai, "_transcribe_client", lambda: fake)
++def _stt_client(handler):
++    return httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://api.elevenlabs.io",
++                             headers={"xi-api-key": "xi-test"})
++
++
++def test_transcribe_sends_scribe_request_and_safe_filename(monkeypatch):
++    seen = []
++
++    def handler(req: httpx.Request):
++        seen.append(req)
++        return httpx.Response(200, json={"text": "  spoken words ", "language_code": "eng"})
++
++    monkeypatch.setattr(ai.settings, "elevenlabs_api_key", "xi-test")
++    monkeypatch.setattr(ai, "_transcribe_client", lambda: _stt_client(handler))
+     out = run(ai.transcribe_audio(b"abc", "m4a", "audio/mp4", "ig"))
+-    assert out.text == "spoken words" and out.status == "success"
+-    call = fake.calls["tx"]
+-    assert call["file"][0] == "audio.m4a" and call["language"] == "ig"
+-    assert call["model"] == ai.settings.openai_transcribe_model
++    assert (out.text, out.status) == ("spoken words", "success")
++    req = seen[0]
++    body = req.content.decode("latin-1")
++    assert req.url.path == "/v1/speech-to-text" and req.headers["xi-api-key"] == "xi-test"
++    assert 'filename="audio.m4a"' in body and ai.settings.elevenlabs_stt_model in body
++    assert 'name="language_code"' in body and "ig" in body and "tag_audio_events" in body
++
++
++def test_transcribe_omits_language_when_not_given(monkeypatch):
++    seen = []
++    monkeypatch.setattr(ai.settings, "elevenlabs_api_key", "xi-test")
++    monkeypatch.setattr(ai, "_transcribe_client", lambda: _stt_client(lambda r: (seen.append(r), httpx.Response(200, json={"text": "ok"}))[1]))
+     run(ai.transcribe_audio(b"abc", "webm", None, None))
+-    assert "language" not in fake.calls["tx"]
++    assert "language_code" not in seen[0].content.decode("latin-1")
++
++
++def test_transcribe_retries_without_language_hint_if_rejected(monkeypatch):
++    seen = []
++
++    def handler(req):
++        seen.append(req.content.decode("latin-1"))
++        return httpx.Response(422, json={}) if "language_code" in seen[-1] else httpx.Response(200, json={"text": "hello"})
++
++    monkeypatch.setattr(ai.settings, "elevenlabs_api_key", "xi-test")
++    monkeypatch.setattr(ai, "_transcribe_client", lambda: _stt_client(handler))
++    out = run(ai.transcribe_audio(b"abc", "webm", None, "xx"))
++    assert (out.text, out.status) == ("hello", "success") and len(seen) == 2
+ 
+ 
+ def test_clients_target_the_right_providers(monkeypatch):
+     monkeypatch.setattr(ai.settings, "deepseek_api_key", "ds-key")
+-    monkeypatch.setattr(ai.settings, "openai_api_key", "oa-key")
+-    ds, oa = ai._client(), ai._transcribe_client()
++    monkeypatch.setattr(ai.settings, "elevenlabs_api_key", "xi-key")
++    ds, el = ai._client(), ai._transcribe_client()
+     assert "deepseek.com" in str(ds.base_url) and ds.api_key == "ds-key"
+-    assert "api.openai.com" in str(oa.base_url) and oa.api_key == "oa-key"
++    assert "elevenlabs.io" in str(el.base_url) and el.headers["xi-api-key"] == "xi-key"
+ 
+ 
+ def test_unavailable_without_keys(monkeypatch):
+     monkeypatch.setattr(ai.settings, "deepseek_api_key", None)
+-    monkeypatch.setattr(ai.settings, "openai_api_key", None)
++    monkeypatch.setattr(ai.settings, "elevenlabs_api_key", None)
+     assert run(ai.generate_chat_reply([{"role": "user", "content": "x"}], "gentle")).status == "unavailable"
+     assert run(ai.transcribe_audio(b"1", "webm", None, None)).status == "unavailable"
+diff --git a/tests/test_api.py b/tests/test_api.py
+index 96808b8..8d0f358 100644
+--- a/tests/test_api.py
++++ b/tests/test_api.py
+@@ -306,17 +306,17 @@ def test_voice_vent_requires_login(client):
+ 
+ def test_voice_vent_unavailable_without_key_and_needs_consent(client, monkeypatch):
+     token = register(client, "v1@example.com")
+-    monkeypatch.setattr(main.settings, "openai_api_key", None)
++    monkeypatch.setattr(main.settings, "elevenlabs_api_key", None)
+     r = client.post("/api/v1/vent/voice", files=_audio(), headers=auth(token)).json()
+     assert r["ai_status"] == "unavailable" and r["transcript"] is None
+-    monkeypatch.setattr(main.settings, "openai_api_key", "sk-test")
++    monkeypatch.setattr(main.settings, "elevenlabs_api_key", "sk-test")
+     r = client.post("/api/v1/vent/voice", files=_audio(), headers=auth(token)).json()
+     assert r["ai_status"] == "consent_required" and r["consent_required"] is True
+ 
+ 
+ def test_voice_vent_transcribes_and_reflects(client, monkeypatch):
+     token = register(client, "v2@example.com")
+-    monkeypatch.setattr(main.settings, "openai_api_key", "sk-test")
++    monkeypatch.setattr(main.settings, "elevenlabs_api_key", "sk-test")
+     monkeypatch.setattr(main.settings, "deepseek_api_key", "sk-test")
+     monkeypatch.setattr(main, "transcribe_audio", _fake_transcribe("work was rough today"))
+ 
+@@ -336,7 +336,7 @@ def test_voice_vent_transcribes_and_reflects(client, monkeypatch):
+ 
+ def test_voice_vent_crisis_transcript_never_reaches_reflection(client, monkeypatch):
+     token = register(client, "v3@example.com")
+-    monkeypatch.setattr(main.settings, "openai_api_key", "sk-test")
++    monkeypatch.setattr(main.settings, "elevenlabs_api_key", "sk-test")
+     monkeypatch.setattr(main, "transcribe_audio", _fake_transcribe("I want to die"))
+     called = []
+ 
+@@ -352,7 +352,7 @@ def test_voice_vent_crisis_transcript_never_reaches_reflection(client, monkeypat
+ 
+ def test_voice_vent_validation_and_failures(client, monkeypatch):
+     token = register(client, "v4@example.com")
+-    monkeypatch.setattr(main.settings, "openai_api_key", "sk-test")
++    monkeypatch.setattr(main.settings, "elevenlabs_api_key", "sk-test")
+     form = {"consent_to_ai_processing": "true"}
+     bad_ext = client.post("/api/v1/vent/voice", files=_audio("x.exe"), data=form, headers=auth(token))
+     assert bad_ext.status_code == 415
+@@ -372,7 +372,7 @@ def test_voice_vent_validation_and_failures(client, monkeypatch):
+ 
+ def test_voice_vent_is_rate_limited(client, monkeypatch):
+     token = register(client, "v5@example.com")
+-    monkeypatch.setattr(main.settings, "openai_api_key", "sk-test")
++    monkeypatch.setattr(main.settings, "elevenlabs_api_key", "sk-test")
+     monkeypatch.setattr(main, "transcribe_audio", _fake_transcribe("hello"))
+     form = {"consent_to_ai_processing": "true"}
+     codes = [client.post("/api/v1/vent/voice", files=_audio(), data=form, headers=auth(token)).status_code
+@@ -449,7 +449,7 @@ def test_chat_validation_and_limits(client, monkeypatch):
+ 
+ def test_voice_reflect_without_deepseek_key_returns_transcript_only(client, monkeypatch):
+     token = register(client, "v3@example.com")
+-    monkeypatch.setattr(main.settings, "openai_api_key", "sk-test")
++    monkeypatch.setattr(main.settings, "elevenlabs_api_key", "sk-test")
+     monkeypatch.setattr(main.settings, "deepseek_api_key", None)
+     monkeypatch.setattr(main, "transcribe_audio", _fake_transcribe("hello there"))
+     r = client.post("/api/v1/vent/voice", files=_audio(), data={"consent_to_ai_processing": "true", "reflect": "true"}, headers=auth(token)).json()

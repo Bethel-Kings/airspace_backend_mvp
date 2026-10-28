@@ -1,4 +1,7 @@
 from dataclasses import dataclass
+
+import httpx
+
 from app.config import settings
 
 STYLE_INSTRUCTIONS = {
@@ -46,10 +49,13 @@ def _client():
     )
 
 
-def _transcribe_client():
-    """OpenAI, used only for speech-to-text because DeepSeek has no audio API."""
-    from openai import AsyncOpenAI
-    return AsyncOpenAI(api_key=settings.openai_api_key, timeout=30.0, max_retries=1)
+def _transcribe_client() -> httpx.AsyncClient:
+    """ElevenLabs Scribe (speech-to-text). DeepSeek has no audio API."""
+    return httpx.AsyncClient(
+        base_url=settings.elevenlabs_base_url,
+        headers={"xi-api-key": settings.elevenlabs_api_key or ""},
+        timeout=30.0,
+    )
 
 
 def _system_prompt(style: str, *, chat: bool = False, voice: bool = False) -> str:
@@ -93,14 +99,30 @@ async def generate_chat_reply(messages: list[dict], style: str) -> ReflectionRes
 async def transcribe_audio(data: bytes, extension: str, content_type: str | None, language: str | None) -> TranscriptionResult:
     if not settings.transcription_enabled:
         return TranscriptionResult(None, "unavailable")
-    try:
-        kwargs = {"language": language} if language else {}
-        result = await _transcribe_client().audio.transcriptions.create(
-            model=settings.openai_transcribe_model,
+
+    async def attempt(client: httpx.AsyncClient, language_code: str | None) -> httpx.Response:
+        form = {
+            "model_id": settings.elevenlabs_stt_model,
+            # Keep the transcript to spoken words only (no "(laughter)" style tags).
+            "tag_audio_events": "false",
+        }
+        if language_code:
+            form["language_code"] = language_code
+        return await client.post(
+            "/v1/speech-to-text",
+            data=form,
             # Client-supplied filenames are never forwarded; only the validated extension is used.
-            file=(f"audio.{extension}", data, content_type or "application/octet-stream"),
-            **kwargs,
+            files={"file": (f"audio.{extension}", data, content_type or "application/octet-stream")},
         )
-        return TranscriptionResult((getattr(result, "text", "") or "").strip(), "success")
+
+    try:
+        async with _transcribe_client() as client:
+            response = await attempt(client, language)
+            if language and response.status_code in (400, 422):
+                # The language hint may not be supported by the model; retry with auto-detection.
+                response = await attempt(client, None)
+            response.raise_for_status()
+            return TranscriptionResult((response.json().get("text") or "").strip(), "success")
     except Exception:
+        # Never log audio or transcripts, and never expose provider errors to the client.
         return TranscriptionResult(None, "fallback")

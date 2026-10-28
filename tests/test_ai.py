@@ -1,4 +1,6 @@
 import asyncio
+
+import httpx
 from types import SimpleNamespace
 
 from app import ai
@@ -9,7 +11,6 @@ class FakeClient:
         self.calls = {}
         self.fail = fail
         self.chat = SimpleNamespace(completions=SimpleNamespace(create=self._chat))
-        self.audio = SimpleNamespace(transcriptions=SimpleNamespace(create=self._tx))
 
     async def _chat(self, **kw):
         if self.fail:
@@ -17,12 +18,6 @@ class FakeClient:
         self.calls["chat"] = kw
         msg = SimpleNamespace(content="  a reply  ")
         return SimpleNamespace(choices=[SimpleNamespace(message=msg)])
-
-    async def _tx(self, **kw):
-        if self.fail:
-            raise RuntimeError("boom")
-        self.calls["tx"] = kw
-        return SimpleNamespace(text="  spoken words ")
 
 
 def run(coro):
@@ -46,37 +41,68 @@ def test_chat_reply_builds_prompt_and_keeps_history(monkeypatch):
 
 def test_provider_failure_returns_generic_fallback_without_leaking(monkeypatch):
     monkeypatch.setattr(ai.settings, "deepseek_api_key", "sk-test")
-    monkeypatch.setattr(ai.settings, "openai_api_key", "sk-test")
+    monkeypatch.setattr(ai.settings, "elevenlabs_api_key", "xi-test")
     monkeypatch.setattr(ai, "_client", lambda: FakeClient(fail=True))
-    monkeypatch.setattr(ai, "_transcribe_client", lambda: FakeClient(fail=True))
+    monkeypatch.setattr(ai, "_transcribe_client", lambda: _stt_client(lambda req: httpx.Response(500)))
     result = run(ai.generate_chat_reply([{"role": "user", "content": "x"}], "gentle"))
     assert result.status == "fallback" and "boom" not in result.text
     assert run(ai.transcribe_audio(b"1", "webm", "audio/webm", None)).status == "fallback"
 
 
-def test_transcribe_uses_safe_filename_and_language(monkeypatch):
-    fake = FakeClient()
-    monkeypatch.setattr(ai.settings, "openai_api_key", "sk-test")
-    monkeypatch.setattr(ai, "_transcribe_client", lambda: fake)
+def _stt_client(handler):
+    return httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://api.elevenlabs.io",
+                             headers={"xi-api-key": "xi-test"})
+
+
+def test_transcribe_sends_scribe_request_and_safe_filename(monkeypatch):
+    seen = []
+
+    def handler(req: httpx.Request):
+        seen.append(req)
+        return httpx.Response(200, json={"text": "  spoken words ", "language_code": "eng"})
+
+    monkeypatch.setattr(ai.settings, "elevenlabs_api_key", "xi-test")
+    monkeypatch.setattr(ai, "_transcribe_client", lambda: _stt_client(handler))
     out = run(ai.transcribe_audio(b"abc", "m4a", "audio/mp4", "ig"))
-    assert out.text == "spoken words" and out.status == "success"
-    call = fake.calls["tx"]
-    assert call["file"][0] == "audio.m4a" and call["language"] == "ig"
-    assert call["model"] == ai.settings.openai_transcribe_model
+    assert (out.text, out.status) == ("spoken words", "success")
+    req = seen[0]
+    body = req.content.decode("latin-1")
+    assert req.url.path == "/v1/speech-to-text" and req.headers["xi-api-key"] == "xi-test"
+    assert 'filename="audio.m4a"' in body and ai.settings.elevenlabs_stt_model in body
+    assert 'name="language_code"' in body and "ig" in body and "tag_audio_events" in body
+
+
+def test_transcribe_omits_language_when_not_given(monkeypatch):
+    seen = []
+    monkeypatch.setattr(ai.settings, "elevenlabs_api_key", "xi-test")
+    monkeypatch.setattr(ai, "_transcribe_client", lambda: _stt_client(lambda r: (seen.append(r), httpx.Response(200, json={"text": "ok"}))[1]))
     run(ai.transcribe_audio(b"abc", "webm", None, None))
-    assert "language" not in fake.calls["tx"]
+    assert "language_code" not in seen[0].content.decode("latin-1")
+
+
+def test_transcribe_retries_without_language_hint_if_rejected(monkeypatch):
+    seen = []
+
+    def handler(req):
+        seen.append(req.content.decode("latin-1"))
+        return httpx.Response(422, json={}) if "language_code" in seen[-1] else httpx.Response(200, json={"text": "hello"})
+
+    monkeypatch.setattr(ai.settings, "elevenlabs_api_key", "xi-test")
+    monkeypatch.setattr(ai, "_transcribe_client", lambda: _stt_client(handler))
+    out = run(ai.transcribe_audio(b"abc", "webm", None, "xx"))
+    assert (out.text, out.status) == ("hello", "success") and len(seen) == 2
 
 
 def test_clients_target_the_right_providers(monkeypatch):
     monkeypatch.setattr(ai.settings, "deepseek_api_key", "ds-key")
-    monkeypatch.setattr(ai.settings, "openai_api_key", "oa-key")
-    ds, oa = ai._client(), ai._transcribe_client()
+    monkeypatch.setattr(ai.settings, "elevenlabs_api_key", "xi-key")
+    ds, el = ai._client(), ai._transcribe_client()
     assert "deepseek.com" in str(ds.base_url) and ds.api_key == "ds-key"
-    assert "api.openai.com" in str(oa.base_url) and oa.api_key == "oa-key"
+    assert "elevenlabs.io" in str(el.base_url) and el.headers["xi-api-key"] == "xi-key"
 
 
 def test_unavailable_without_keys(monkeypatch):
     monkeypatch.setattr(ai.settings, "deepseek_api_key", None)
-    monkeypatch.setattr(ai.settings, "openai_api_key", None)
+    monkeypatch.setattr(ai.settings, "elevenlabs_api_key", None)
     assert run(ai.generate_chat_reply([{"role": "user", "content": "x"}], "gentle")).status == "unavailable"
     assert run(ai.transcribe_audio(b"1", "webm", None, None)).status == "unavailable"
