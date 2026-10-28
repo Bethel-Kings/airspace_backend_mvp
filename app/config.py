@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     # (tokens stop working on restart). Production must set JWT_SECRET.
     jwt_secret: str | None = None
     jwt_expire_minutes: int = 60 * 24 * 7
-    cors_origins: str = "http://localhost:3000,http://localhost:5173"
+    cors_origins: str = "http://localhost:3000,http://localhost:5173,https://air-space-frontend-nine.vercel.app"
     openai_api_key: str | None = None
     openai_model: str = "gpt-4o-mini"
     # Verified local support contacts appended to the crisis message

@@ -273,3 +273,16 @@ def test_crisis_resources_in_flagged_responses(client):
     assert checkin_res["safety_notice"] is not None
     assert checkin_res["crisis_resources"] is not None
     assert len(checkin_res["crisis_resources"]) == 5
+
+
+def test_cors_allows_vercel_frontend(client):
+    origin = "https://air-space-frontend-nine.vercel.app"
+    response = client.options(
+        "/api/v1/crisis-resources",
+        headers={
+            "Origin": origin,
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+    assert response.status_code == 200
+    assert response.headers.get("access-control-allow-origin") == origin
