@@ -101,6 +101,52 @@ def test_checkin_score_validation(client):
     assert response.status_code == 422
 
 
+def test_capabilities_requires_auth_and_reports_switches_without_secrets(client, monkeypatch):
+    assert client.get("/api/v1/capabilities").status_code == 401
+    monkeypatch.setattr(main.settings, "deepseek_api_key", "configured-but-not-returned")
+    monkeypatch.setattr(main.settings, "elevenlabs_api_key", "configured-but-not-returned")
+    token = register(client, "capabilities@example.com")
+    response = client.get("/api/v1/capabilities", headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ai_enabled"] is True
+    assert body["text_ai_provider"] == "DeepSeek"
+    assert body["transcription_enabled"] is True
+    assert body["transcription_provider"] == "ElevenLabs"
+    assert body["checkins_page_size"] == 100
+    assert body["chat_max_messages"] == 20
+    assert "configured-but-not-returned" not in response.text
+
+    monkeypatch.setattr(main.settings, "deepseek_api_key", None)
+    monkeypatch.setattr(main.settings, "elevenlabs_api_key", None)
+    unavailable = client.get("/api/v1/capabilities", headers={"Authorization": f"Bearer {token}"}).json()
+    assert unavailable["ai_enabled"] is False
+    assert unavailable["text_ai_provider"] is None
+    assert unavailable["transcription_enabled"] is False
+    assert unavailable["transcription_provider"] is None
+
+
+def test_checkin_list_supports_limit_offset_and_validates_bounds(client):
+    token = register(client, "pagination@example.com")
+    headers = {"Authorization": f"Bearer {token}"}
+    created_ids = []
+    for score in (3, 5, 7):
+        response = client.post("/api/v1/checkins", json={"before_score": score}, headers=headers)
+        assert response.status_code == 201
+        created_ids.append(response.json()["id"])
+
+    other_token = register(client, "other-pagination@example.com")
+    client.post("/api/v1/checkins", json={"before_score": 9}, headers={"Authorization": f"Bearer {other_token}"})
+
+    first = client.get("/api/v1/checkins?limit=2&offset=0", headers=headers)
+    second = client.get("/api/v1/checkins?limit=2&offset=2", headers=headers)
+    assert [item["id"] for item in first.json()] == created_ids[::-1][:2]
+    assert [item["id"] for item in second.json()] == created_ids[::-1][2:]
+    assert [item["id"] for item in client.get("/api/v1/checkins", headers=headers).json()] == created_ids[::-1]
+    assert client.get("/api/v1/checkins?limit=101", headers=headers).status_code == 422
+    assert client.get("/api/v1/checkins?offset=-1", headers=headers).status_code == 422
+
+
 def auth(token):
     return {"Authorization": f"Bearer {token}"}
 

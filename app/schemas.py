@@ -5,9 +5,35 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, mo
 
 AiStatus = Literal["skipped_for_safety", "unavailable", "consent_required", "success", "fallback"]
 
+VENT_MAX_CHARS = 12_000
+REFRAME_MAX_CHARS = 6_000
+CHAT_MAX_MESSAGES = 20
+CHAT_MAX_MESSAGE_CHARS = 4_000
+CHAT_MAX_TOTAL_CHARS = 12_000
+CHECKIN_PAGE_SIZE = 100
+CHECKIN_OFFSET_MAX = 1_000_000
+CHECKIN_NOTE_MAX_CHARS = 500
+
 
 class ErrorResponse(BaseModel):
     detail: str
+
+
+class CapabilitiesResponse(BaseModel):
+    """Server feature switches and request limits; never includes secret values."""
+
+    ai_enabled: bool
+    text_ai_provider: str | None
+    transcription_enabled: bool
+    transcription_provider: str | None
+    max_vent_chars: int
+    max_reframe_chars: int
+    max_audio_bytes: int
+    chat_max_messages: int
+    chat_max_message_chars: int
+    chat_max_total_chars: int
+    checkins_page_size: int
+    checkin_note_max_chars: int
 
 
 class CrisisResource(BaseModel):
@@ -47,11 +73,11 @@ class UserResponse(BaseModel):
 
 
 class VentRequest(BaseModel):
-    text: str = Field(min_length=1, max_length=12000)
+    text: str = Field(min_length=1, max_length=VENT_MAX_CHARS)
 
 
 class ReframeRequest(BaseModel):
-    text: str = Field(min_length=1, max_length=6000)
+    text: str = Field(min_length=1, max_length=REFRAME_MAX_CHARS)
     prompt_style: str = Field(default="gentle", pattern="^(gentle|practical|reflective)$")
     # Frontend must disclose external AI processing and obtain opt-in first.
     consent_to_ai_processing: bool = False
@@ -63,13 +89,13 @@ ChatRole = Literal["user", "assistant"]
 class ChatMessage(BaseModel):
     # "system" is deliberately not accepted: clients must not be able to inject instructions.
     role: ChatRole
-    content: str = Field(min_length=1, max_length=4000)
+    content: str = Field(min_length=1, max_length=CHAT_MAX_MESSAGE_CHARS)
 
 
 class ChatRequest(BaseModel):
     """Stateless chat: the client sends the running conversation; the server stores nothing."""
 
-    messages: list[ChatMessage] = Field(min_length=1, max_length=20)
+    messages: list[ChatMessage] = Field(min_length=1, max_length=CHAT_MAX_MESSAGES)
     prompt_style: str = Field(default="gentle", pattern="^(gentle|practical|reflective)$")
     # Frontend must disclose external AI processing and obtain opt-in first.
     consent_to_ai_processing: bool = False
@@ -78,7 +104,7 @@ class ChatRequest(BaseModel):
     def _valid_conversation(self):
         if self.messages[-1].role != "user":
             raise ValueError("The last message must be from the user.")
-        if sum(len(m.content) for m in self.messages) > 12000:
+        if sum(len(m.content) for m in self.messages) > CHAT_MAX_TOTAL_CHARS:
             raise ValueError("Conversation is too long. Send fewer or shorter messages.")
         return self
 
@@ -130,7 +156,7 @@ class CheckInCreate(BaseModel):
     before_score: int = Field(ge=1, le=10)
     after_score: int | None = Field(default=None, ge=1, le=10)
     emotion: str | None = Field(default=None, max_length=80)
-    note: str | None = Field(default=None, max_length=500)
+    note: str | None = Field(default=None, max_length=CHECKIN_NOTE_MAX_CHARS)
 
 
 class CheckInUpdate(BaseModel):
@@ -139,7 +165,7 @@ class CheckInUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     after_score: int | None = Field(default=None, ge=1, le=10)
     emotion: str | None = Field(default=None, max_length=80)
-    note: str | None = Field(default=None, max_length=500)
+    note: str | None = Field(default=None, max_length=CHECKIN_NOTE_MAX_CHARS)
 
     @model_validator(mode="after")
     def _at_least_one(self):
