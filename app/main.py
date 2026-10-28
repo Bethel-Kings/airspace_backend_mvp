@@ -1,10 +1,10 @@
 from contextlib import asynccontextmanager
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
-from app.ai import GENERIC_FALLBACK, generate_reflection
+from app.ai import ALLOWED_AUDIO_EXTENSIONS, GENERIC_FALLBACK, generate_chat_reply, generate_reflection, transcribe_audio
 from app.auth import current_user
 from app.config import settings
 from app.database import Base, engine, get_db
@@ -12,13 +12,24 @@ from app.models import CheckIn, User
 from app.ratelimit import client_ip, ip_limit, limiter
 from app.safety import get_crisis_message, get_crisis_resources, may_need_immediate_support
 from app.schemas import (
-    CheckInCreate, CheckInResponse, CheckInUpdate, CrisisResource, ErrorResponse, LoginRequest, ReframeRequest,
-    ReframeResponse, RegisterRequest, TokenResponse, UserResponse, VentRequest, VentResponse,
+    ChatRequest, ChatResponse, CheckInCreate, CheckInResponse, CheckInUpdate, CrisisResource, ErrorResponse,
+    LoginRequest, ReframeRequest, ReframeResponse, RegisterRequest, TokenResponse, UserResponse, VentRequest,
+    VentResponse, VoiceVentResponse,
 )
 from app.security import DUMMY_HASH, create_access_token, hash_password, verify_password
 
 AUTH_401 = {401: {"model": ErrorResponse, "description": "Missing, invalid or expired token."}}
 RATE_429 = {429: {"model": ErrorResponse, "description": "Rate limited. See the Retry-After header."}}
+
+VENT_ACKNOWLEDGEMENT = (
+    "You can put it into words here without needing to make it sound neat. "
+    "You do not have to solve it all in this moment."
+)
+VENT_PROMPTS = [
+    "What feels heaviest about this right now?",
+    "What do you wish someone understood?",
+    "What would help you feel a little more supported in the next few minutes?",
+]
 
 
 @asynccontextmanager
@@ -30,9 +41,9 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title=settings.app_name,
-    version="0.3.0",
+    version="0.4.0",
     description=(
-        "AirSpace MVP API: vent, reflect, and track emotional check-ins.\n\n"
+        "AirSpace MVP API: vent (text or voice), chat, reflect, and track emotional check-ins.\n\n"
         "Errors: business errors are `{\"detail\": \"message\"}`; validation errors (422) return "
         "`detail` as a list of `{loc, msg, type}` objects."
     ),
@@ -123,15 +134,8 @@ def vent(payload: VentRequest, user: User = Depends(current_user)):
     # Submitted vent text is checked transiently; this endpoint neither stores nor forwards it to AI.
     crisis = may_need_immediate_support(payload.text)
     return VentResponse(
-        acknowledgement=(
-            "You can put it into words here without needing to make it sound neat. "
-            "You do not have to solve it all in this moment."
-        ),
-        reflection_prompts=[
-            "What feels heaviest about this right now?",
-            "What do you wish someone understood?",
-            "What would help you feel a little more supported in the next few minutes?",
-        ],
+        acknowledgement=VENT_ACKNOWLEDGEMENT,
+        reflection_prompts=list(VENT_PROMPTS),
         safety_notice=get_crisis_message() if crisis else None,
         crisis_resources=get_crisis_resources() if crisis else None,
         stored=False,
@@ -174,6 +178,98 @@ async def reframe(payload: ReframeRequest, request: Request, user: User = Depend
     limiter.check(f"reframe:ip:{client_ip(request)}", 100, 3600)
     result = await generate_reflection(payload.text, payload.prompt_style)
     return ReframeResponse(reflection=result.text, ai_enabled=True, ai_status=result.status)
+
+
+@app.post(
+    "/api/v1/vent/voice", response_model=VoiceVentResponse, tags=["vent"],
+    summary="Voice vent: transcribe audio (consented AI), optionally reflect. Audio is never stored.",
+    responses={
+        **AUTH_401, **RATE_429,
+        413: {"model": ErrorResponse, "description": "Audio file too large."},
+        415: {"model": ErrorResponse, "description": "Unsupported audio format."},
+    },
+)
+async def vent_voice(
+    request: Request,
+    audio: UploadFile = File(..., description="Recorded audio (webm, ogg, mp4/m4a, mp3, wav, flac)."),
+    consent_to_ai_processing: bool = Form(False),
+    reflect: bool = Form(False, description="Also return an AI reply to the transcript."),
+    prompt_style: str = Form("gentle", pattern="^(gentle|practical|reflective)$"),
+    language: str | None = Form(None, pattern="^[a-z]{2}$", description="Optional ISO-639-1 hint, e.g. en, ig, yo, ha."),
+    user: User = Depends(current_user),
+):
+    ai_enabled = bool(settings.openai_api_key)
+    if not ai_enabled:
+        # No server-side transcription. The client can fall back to on-device speech recognition + POST /vent.
+        return VoiceVentResponse(ai_enabled=False, ai_status="unavailable")
+    if not consent_to_ai_processing:
+        return VoiceVentResponse(ai_enabled=True, ai_status="consent_required", consent_required=True)
+
+    ext = (audio.filename or "").rsplit(".", 1)[-1].lower() if "." in (audio.filename or "") else ""
+    if ext not in ALLOWED_AUDIO_EXTENSIONS:
+        raise HTTPException(status_code=415, detail="Unsupported audio format.")
+    declared = request.headers.get("content-length")
+    if declared and declared.isdigit() and int(declared) > settings.max_audio_bytes + 64 * 1024:
+        raise HTTPException(status_code=413, detail="Audio file is too large.")
+    data = await audio.read(settings.max_audio_bytes + 1)
+    if len(data) > settings.max_audio_bytes:
+        raise HTTPException(status_code=413, detail="Audio file is too large.")
+    if not data:
+        raise HTTPException(status_code=422, detail="Audio file is empty.")
+
+    # Paid calls only; crisis handling below is never throttled because it happens after transcription.
+    limiter.check(f"voice:user:{user.id}", 20, 3600)
+    limiter.check(f"voice:ip:{client_ip(request)}", 60, 3600)
+
+    transcription = await transcribe_audio(data, ext, audio.content_type, language)
+    del data  # audio is never persisted
+    if transcription.text is None or not transcription.text:
+        # Provider failure or no speech detected: the client should offer typing instead.
+        return VoiceVentResponse(ai_enabled=True, ai_status="fallback")
+    transcript = transcription.text
+
+    if may_need_immediate_support(transcript):
+        return VoiceVentResponse(
+            transcript=transcript,
+            safety_notice=get_crisis_message(),
+            crisis_resources=get_crisis_resources(),
+            needs_human_support=True,
+            ai_enabled=True,
+            ai_status="skipped_for_safety",
+        )
+    if not reflect:
+        return VoiceVentResponse(
+            transcript=transcript,
+            acknowledgement=VENT_ACKNOWLEDGEMENT,
+            reflection_prompts=list(VENT_PROMPTS),
+            ai_enabled=True,
+            ai_status="success",
+        )
+    result = await generate_reflection(transcript, prompt_style, voice=True)
+    return VoiceVentResponse(transcript=transcript, reply=result.text, ai_enabled=True, ai_status=result.status)
+
+
+@app.post("/api/v1/chat", response_model=ChatResponse, tags=["chat"],
+          summary="Stateless AI chat turn (consented). Nothing is stored.", responses={**AUTH_401, **RATE_429})
+async def chat(payload: ChatRequest, request: Request, user: User = Depends(current_user)):
+    # Every user turn in the window is screened, so an earlier flagged message cannot be skipped by resending.
+    if any(m.role == "user" and may_need_immediate_support(m.content) for m in payload.messages):
+        return ChatResponse(
+            safety_notice=get_crisis_message(),
+            crisis_resources=get_crisis_resources(),
+            needs_human_support=True,
+            ai_enabled=bool(settings.openai_api_key),
+            ai_status="skipped_for_safety",
+        )
+    if not settings.openai_api_key:
+        return ChatResponse(reply=GENERIC_FALLBACK, ai_enabled=False, ai_status="unavailable")
+    if not payload.consent_to_ai_processing:
+        return ChatResponse(ai_enabled=True, ai_status="consent_required", consent_required=True)
+
+    limiter.check(f"chat:user:{user.id}", 60, 3600)
+    limiter.check(f"chat:ip:{client_ip(request)}", 200, 3600)
+    result = await generate_chat_reply([m.model_dump() for m in payload.messages], payload.prompt_style)
+    return ChatResponse(reply=result.text, ai_enabled=True, ai_status=result.status)
 
 
 @app.post("/api/v1/checkins", response_model=CheckInResponse, status_code=201, tags=["checkins"],

@@ -20,6 +20,9 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:3000,http://localhost:5173,https://air-space-frontend-nine.vercel.app"
     openai_api_key: str | None = None
     openai_model: str = "gpt-4o-mini"
+    # Speech-to-text model for voice vent (verify it is available to your OpenAI account).
+    openai_transcribe_model: str = "gpt-4o-mini-transcribe"
+    max_audio_bytes: int = 10 * 1024 * 1024  # OpenAI's hard limit is 25 MB; keep ours lower to cap cost
     # Verified local support contacts appended to the crisis message
     # (can be a JSON array of CrisisResource objects, or plain text contacts).
     crisis_resources: str = ""

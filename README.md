@@ -31,7 +31,9 @@ The API tests use an isolated in-memory SQLite database. They do not replace a d
 - `JWT_SECRET`: a unique random value in production. Production settings reject the placeholder or a secret shorter than 32 characters.
 - `CORS_ORIGINS`: comma-separated exact frontend origins.
 - `OPENAI_API_KEY`: optional. When configured, the reframe endpoint requires explicit consent before sending the text to OpenAI.
-- `OPENAI_MODEL`: a model available to your API account.
+- `OPENAI_MODEL`: a chat model available to your API account.
+- `OPENAI_TRANSCRIBE_MODEL`: speech-to-text model used by voice vent (default `gpt-4o-mini-transcribe`; `whisper-1` also works).
+- `MAX_AUDIO_BYTES`: upload cap for voice vent (default 10 MB).
 - `CRISIS_RESOURCES`: optional, reviewed local support contacts (JSON array of `CrisisResource` objects or plain text) included in safety notices and returned by `/api/v1/crisis-resources`.
 
 `JWT_SECRET` has no default. In development an ephemeral one is generated (tokens reset on restart). Production refuses to start without a strong one.
@@ -54,6 +56,14 @@ The API tests use an isolated in-memory SQLite database. They do not replace a d
 | DELETE | `/api/v1/account` | Delete account and associated check-ins |
 
 When the AI key is configured, the frontend must explain that the text will be processed by an external AI provider and set `consent_to_ai_processing` to `true` only after the user opts in. Without consent, the API does not send the text to the provider. Without an API key, the API returns a generic fallback that does not use the submitted text.
+
+## Voice vent and chat
+
+Both endpoints follow the same rules as `/reframe`: crisis phrases skip the AI entirely, the user must opt in (`consent_to_ai_processing`), and only paid calls are rate limited (voice 20/hour, chat 60/hour per user).
+
+- **Voice:** `multipart/form-data` with `audio` (webm, ogg, mp4/m4a, mp3, wav, flac; max 10 MB), `consent_to_ai_processing`, optional `reflect` (also return an AI reply), `prompt_style`, and `language` (ISO-639-1 hint). The transcript is screened before any reply is generated. Audio is held in memory only.
+- **Chat:** send `{"messages": [{"role": "user"|"assistant", "content": "..."}], "prompt_style", "consent_to_ai_processing"}`. The last message must be from the user. Every user turn is screened, so one flagged message ends AI replies until the client sends a fresh conversation. `system` messages are rejected.
+- Without an API key, voice returns `ai_status: "unavailable"` (use on-device speech recognition and `POST /vent` instead) and chat returns the generic fallback prompt.
 
 ## Render
 

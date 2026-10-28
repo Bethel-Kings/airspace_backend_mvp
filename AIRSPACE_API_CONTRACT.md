@@ -1,4 +1,4 @@
-# AirSpace API: Frontend Contract (v0.3.0)
+# AirSpace API: Frontend Contract (v0.4.0)
 
 Verified against `Bethel-Kings/airspace_backend_mvp` with `airspace-handoff-fixes.patch` applied. Interactive docs: `{BASE_URL}/docs`. Machine-readable spec: `openapi.json` (attached alongside this file).
 
@@ -124,6 +124,49 @@ Same body. `200` returns the same token shape. Errors: `401 "Invalid email or pa
 - Text is **not stored and not sent to AI**.
 - Acknowledgement and prompts are currently **static** (identical every call).
 - If `safety_notice` is non-null, crisis resources are also returned in `crisis_resources`. Show it prominently **before** anything else.
+
+### `POST /api/v1/vent/voice`  (auth, `multipart/form-data`)
+Fields: `audio` (file: webm, ogg, mp4, m4a, mp3, wav, flac; max 10 MB), `consent_to_ai_processing` (bool, default false), `reflect` (bool, default false), `prompt_style` (`gentle|practical|reflective`), `language` (optional ISO-639-1 code such as `en`, `ig`, `yo`, `ha`).
+```json
+{
+  "transcript": "string | null",
+  "reply": "string | null",
+  "acknowledgement": "string | null",
+  "reflection_prompts": ["string"] | null,
+  "safety_notice": "string | null",
+  "crisis_resources": [ ... ] | null,
+  "needs_human_support": false,
+  "ai_enabled": true,
+  "ai_status": "see table",
+  "consent_required": false,
+  "stored": false
+}
+```
+| `ai_status` | Meaning | What the UI does |
+|---|---|---|
+| `unavailable` | No AI key on the server. No transcript. | Fall back to on-device speech recognition and `POST /vent`, or a typing box. |
+| `consent_required` | Audio would be sent to OpenAI and the user has not opted in. | Show the disclosure, then resend with `consent_to_ai_processing=true`. Re-record is not needed if you kept the blob. |
+| `fallback` | Provider failed, or no speech was detected. `transcript` is null. | Say "I couldn't catch that" and offer to retry or type. |
+| `skipped_for_safety` | Transcript tripped the crisis check. `transcript` is returned so the user sees what was heard; no reply is generated. | Same rule as `/vent`: the safety screen takes over. |
+| `success` | Transcript returned. `reply` is set only when `reflect=true`; otherwise `acknowledgement` and `reflection_prompts` are set. | Show them. |
+
+Errors: `413` (file too large), `415` (unsupported extension; name the file with the right extension, e.g. `note.webm`), `422` (empty file / bad field), `429` (20 per hour per user). Audio is processed in memory and never stored. The audio and transcript go to OpenAI, so the consent disclosure must say so.
+
+### `POST /api/v1/chat`  (auth)
+```json
+{
+  "messages": [ { "role": "user", "content": "max 4000 chars" }, { "role": "assistant", "content": "..." }, { "role": "user", "content": "..." } ],
+  "prompt_style": "gentle | practical | reflective",
+  "consent_to_ai_processing": false
+}
+```
+```json
+{ "reply": "string | null", "safety_notice": "string | null", "crisis_resources": [ ... ] | null, "needs_human_support": false, "ai_enabled": true, "ai_status": "see /reframe table", "consent_required": false }
+```
+- **Stateless:** the server stores nothing. The client keeps the conversation and resends it each turn (1-20 messages, 12,000 chars total, last message must be `user`, roles are only `user` and `assistant`; `system` returns `422`).
+- Every user message in the window is screened. If any is flagged, `ai_status` is `skipped_for_safety` and no AI call is made. Start a fresh conversation only after showing the safety screen.
+- Without an API key the reply is the generic fallback and `ai_status` is `unavailable`. Limit: 60 AI calls per hour per user (`429`).
+- Consent flow is the same as `/reframe`.
 
 ### `POST /api/v1/reframe`  (auth)
 ```json
@@ -257,5 +300,7 @@ type ApiError = { detail: string | { loc: (string | number)[]; msg: string; type
 | `DELETE /account` needs no password | Add a confirmation dialog in the UI |
 | Check-in list capped at 100, unpaginated | History screens will truncate |
 | Rate limits are per-server-process | Fine on one Render instance; not shared across instances |
-| `/vent` text is static | Do not market it as personalized |
+| `/vent` text is static | Do not market it as personalized (use `/chat` or `/vent/voice` with `reflect=true` for AI replies) |
+| Chat history is client-held | Losing the client state loses the conversation; the server never keeps it |
+| No spoken (TTS) replies yet | Use on-device text-to-speech if you want replies read aloud |
 | Crisis detector is a phrase match | Misses real risk; UI must never imply "no warning = safe" |

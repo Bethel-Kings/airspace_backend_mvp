@@ -57,6 +57,57 @@ class ReframeRequest(BaseModel):
     consent_to_ai_processing: bool = False
 
 
+ChatRole = Literal["user", "assistant"]
+
+
+class ChatMessage(BaseModel):
+    # "system" is deliberately not accepted: clients must not be able to inject instructions.
+    role: ChatRole
+    content: str = Field(min_length=1, max_length=4000)
+
+
+class ChatRequest(BaseModel):
+    """Stateless chat: the client sends the running conversation; the server stores nothing."""
+
+    messages: list[ChatMessage] = Field(min_length=1, max_length=20)
+    prompt_style: str = Field(default="gentle", pattern="^(gentle|practical|reflective)$")
+    # Frontend must disclose external AI processing and obtain opt-in first.
+    consent_to_ai_processing: bool = False
+
+    @model_validator(mode="after")
+    def _valid_conversation(self):
+        if self.messages[-1].role != "user":
+            raise ValueError("The last message must be from the user.")
+        if sum(len(m.content) for m in self.messages) > 12000:
+            raise ValueError("Conversation is too long. Send fewer or shorter messages.")
+        return self
+
+
+class ChatResponse(BaseModel):
+    reply: str | None = None
+    safety_notice: str | None = None
+    crisis_resources: list[CrisisResource] | None = None
+    needs_human_support: bool = False
+    ai_enabled: bool
+    ai_status: AiStatus
+    consent_required: bool = False
+
+
+class VoiceVentResponse(BaseModel):
+    transcript: str | None = None
+    # Present only when `reflect=true` and nothing was flagged.
+    reply: str | None = None
+    acknowledgement: str | None = None
+    reflection_prompts: list[str] | None = None
+    safety_notice: str | None = None
+    crisis_resources: list[CrisisResource] | None = None
+    needs_human_support: bool = False
+    ai_enabled: bool
+    ai_status: AiStatus
+    consent_required: bool = False
+    stored: bool = False
+
+
 class VentResponse(BaseModel):
     acknowledgement: str
     reflection_prompts: list[str]

@@ -2,8 +2,8 @@
   "openapi": "3.1.0",
   "info": {
     "title": "AirSpace API",
-    "description": "AirSpace MVP API: vent, reflect, and track emotional check-ins.\n\nErrors: business errors are `{\"detail\": \"message\"}`; validation errors (422) return `detail` as a list of `{loc, msg, type}` objects.",
-    "version": "0.3.0"
+    "description": "AirSpace MVP API: vent (text or voice), chat, reflect, and track emotional check-ins.\n\nErrors: business errors are `{\"detail\": \"message\"}`; validation errors (422) return `detail` as a list of `{loc, msg, type}` objects.",
+    "version": "0.4.0"
   },
   "paths": {
     "/health": {
@@ -330,6 +330,158 @@
         ]
       }
     },
+    "/api/v1/vent/voice": {
+      "post": {
+        "tags": [
+          "vent"
+        ],
+        "summary": "Voice vent: transcribe audio (consented AI), optionally reflect. Audio is never stored.",
+        "operationId": "vent_voice_api_v1_vent_voice_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_vent_voice_api_v1_vent_voice_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VoiceVentResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid or expired token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited. See the Retry-After header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Audio file too large.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported audio format.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/chat": {
+      "post": {
+        "tags": [
+          "chat"
+        ],
+        "summary": "Stateless AI chat turn (consented). Nothing is stored.",
+        "operationId": "chat_api_v1_chat_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChatRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid or expired token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited. See the Retry-After header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
     "/api/v1/checkins": {
       "get": {
         "tags": [
@@ -591,6 +743,176 @@
   },
   "components": {
     "schemas": {
+      "Body_vent_voice_api_v1_vent_voice_post": {
+        "properties": {
+          "audio": {
+            "type": "string",
+            "contentMediaType": "application/octet-stream",
+            "title": "Audio",
+            "description": "Recorded audio (webm, ogg, mp4/m4a, mp3, wav, flac)."
+          },
+          "consent_to_ai_processing": {
+            "type": "boolean",
+            "title": "Consent To Ai Processing",
+            "default": false
+          },
+          "reflect": {
+            "type": "boolean",
+            "title": "Reflect",
+            "description": "Also return an AI reply to the transcript.",
+            "default": false
+          },
+          "prompt_style": {
+            "type": "string",
+            "pattern": "^(gentle|practical|reflective)$",
+            "title": "Prompt Style",
+            "default": "gentle"
+          },
+          "language": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[a-z]{2}$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Language",
+            "description": "Optional ISO-639-1 hint, e.g. en, ig, yo, ha."
+          }
+        },
+        "type": "object",
+        "required": [
+          "audio"
+        ],
+        "title": "Body_vent_voice_api_v1_vent_voice_post"
+      },
+      "ChatMessage": {
+        "properties": {
+          "role": {
+            "type": "string",
+            "enum": [
+              "user",
+              "assistant"
+            ],
+            "title": "Role"
+          },
+          "content": {
+            "type": "string",
+            "maxLength": 4000,
+            "minLength": 1,
+            "title": "Content"
+          }
+        },
+        "type": "object",
+        "required": [
+          "role",
+          "content"
+        ],
+        "title": "ChatMessage"
+      },
+      "ChatRequest": {
+        "properties": {
+          "messages": {
+            "items": {
+              "$ref": "#/components/schemas/ChatMessage"
+            },
+            "type": "array",
+            "maxItems": 20,
+            "minItems": 1,
+            "title": "Messages"
+          },
+          "prompt_style": {
+            "type": "string",
+            "pattern": "^(gentle|practical|reflective)$",
+            "title": "Prompt Style",
+            "default": "gentle"
+          },
+          "consent_to_ai_processing": {
+            "type": "boolean",
+            "title": "Consent To Ai Processing",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "messages"
+        ],
+        "title": "ChatRequest",
+        "description": "Stateless chat: the client sends the running conversation; the server stores nothing."
+      },
+      "ChatResponse": {
+        "properties": {
+          "reply": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reply"
+          },
+          "safety_notice": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Safety Notice"
+          },
+          "crisis_resources": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/CrisisResource"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Crisis Resources"
+          },
+          "needs_human_support": {
+            "type": "boolean",
+            "title": "Needs Human Support",
+            "default": false
+          },
+          "ai_enabled": {
+            "type": "boolean",
+            "title": "Ai Enabled"
+          },
+          "ai_status": {
+            "type": "string",
+            "enum": [
+              "skipped_for_safety",
+              "unavailable",
+              "consent_required",
+              "success",
+              "fallback"
+            ],
+            "title": "Ai Status"
+          },
+          "consent_required": {
+            "type": "boolean",
+            "title": "Consent Required",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "ai_enabled",
+          "ai_status"
+        ],
+        "title": "ChatResponse"
+      },
       "CheckInCreate": {
         "properties": {
           "before_score": {
@@ -1129,6 +1451,118 @@
           "reflection_prompts"
         ],
         "title": "VentResponse"
+      },
+      "VoiceVentResponse": {
+        "properties": {
+          "transcript": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Transcript"
+          },
+          "reply": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reply"
+          },
+          "acknowledgement": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Acknowledgement"
+          },
+          "reflection_prompts": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reflection Prompts"
+          },
+          "safety_notice": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Safety Notice"
+          },
+          "crisis_resources": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/CrisisResource"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Crisis Resources"
+          },
+          "needs_human_support": {
+            "type": "boolean",
+            "title": "Needs Human Support",
+            "default": false
+          },
+          "ai_enabled": {
+            "type": "boolean",
+            "title": "Ai Enabled"
+          },
+          "ai_status": {
+            "type": "string",
+            "enum": [
+              "skipped_for_safety",
+              "unavailable",
+              "consent_required",
+              "success",
+              "fallback"
+            ],
+            "title": "Ai Status"
+          },
+          "consent_required": {
+            "type": "boolean",
+            "title": "Consent Required",
+            "default": false
+          },
+          "stored": {
+            "type": "boolean",
+            "title": "Stored",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "ai_enabled",
+          "ai_status"
+        ],
+        "title": "VoiceVentResponse"
       }
     },
     "securitySchemes": {
