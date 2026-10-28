@@ -1,7 +1,8 @@
 import asyncio
+from types import SimpleNamespace
 
 import httpx
-from types import SimpleNamespace
+import pytest
 
 from app import ai
 
@@ -51,14 +52,33 @@ def test_empty_groq_reply_falls_back_with_reasoning_headroom(monkeypatch):
     assert fake.calls["chat"]["max_completion_tokens"] == 1024
 
 
-def test_provider_failure_returns_generic_fallback_without_leaking(monkeypatch):
+def test_empty_deepseek_reply_falls_back(monkeypatch):
+    fake = FakeClient(text=" \t\n")
+    monkeypatch.setattr(ai.settings, "deepseek_api_key", "deepseek-test")
+    monkeypatch.setattr(ai, "_client", lambda: fake)
+    result = run(ai.generate_reflection("submitted vent text", "gentle"))
+    assert (result.text, result.status) == (ai.GENERIC_FALLBACK, "fallback")
+
+
+def test_provider_failure_returns_generic_fallback_without_leaking(monkeypatch, caplog):
     monkeypatch.setattr(ai.settings, "groq_api_key", "groq-test")
     monkeypatch.setattr(ai.settings, "elevenlabs_api_key", "xi-test")
     monkeypatch.setattr(ai, "_groq_client", lambda: FakeClient(fail=True))
     monkeypatch.setattr(ai, "_transcribe_client", lambda: _stt_client(lambda req: httpx.Response(500)))
-    result = run(ai.generate_chat_reply([{"role": "user", "content": "x"}], "gentle"))
+    submitted_text = "private submitted chat text"
+    result = run(ai.generate_chat_reply([{"role": "user", "content": submitted_text}], "gentle"))
     assert result.status == "fallback" and "boom" not in result.text
+    assert submitted_text not in caplog.text
     assert run(ai.transcribe_audio(b"1", "webm", "audio/webm", None)).status == "fallback"
+
+
+def test_deepseek_provider_failure_does_not_log_submitted_text(monkeypatch, caplog):
+    monkeypatch.setattr(ai.settings, "deepseek_api_key", "deepseek-test")
+    monkeypatch.setattr(ai, "_client", lambda: FakeClient(fail=True))
+    submitted_text = "private submitted reflection text"
+    result = run(ai.generate_reflection(submitted_text, "gentle"))
+    assert result == ai.ReflectionResult(ai.GENERIC_FALLBACK, "fallback")
+    assert submitted_text not in caplog.text
 
 
 def _stt_client(handler):
@@ -90,6 +110,18 @@ def test_transcribe_omits_language_when_not_given(monkeypatch):
     monkeypatch.setattr(ai, "_transcribe_client", lambda: _stt_client(lambda r: (seen.append(r), httpx.Response(200, json={"text": "ok"}))[1]))
     run(ai.transcribe_audio(b"abc", "webm", None, None))
     assert "language_code" not in seen[0].content.decode("latin-1")
+
+
+@pytest.mark.parametrize("transcript", ["", " \t\n"])
+def test_transcribe_empty_transcript_does_not_leak_provider_error(monkeypatch, transcript):
+    monkeypatch.setattr(ai.settings, "elevenlabs_api_key", "xi-test")
+    monkeypatch.setattr(
+        ai,
+        "_transcribe_client",
+        lambda: _stt_client(lambda req: httpx.Response(200, json={"text": transcript})),
+    )
+    result = run(ai.transcribe_audio(b"abc", "webm", None, None))
+    assert (result.text, result.status) == ("", "success")
 
 
 def test_transcribe_retries_without_language_hint_if_rejected(monkeypatch):

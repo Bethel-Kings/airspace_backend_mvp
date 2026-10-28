@@ -53,6 +53,8 @@ The API tests use an isolated in-memory SQLite database. They do not replace a d
 | POST | `/api/v1/auth/login` | Obtain bearer token |
 | GET | `/api/v1/me` | Current user profile (token validation) |
 | POST | `/api/v1/vent` | Return acknowledgement/prompts; does not persist the submitted text |
+| POST | `/api/v1/vent/voice` | Transcribe a consented voice vent; optionally generate a reflection |
+| POST | `/api/v1/chat` | Stateless, consent-based AI chat |
 | POST | `/api/v1/reframe` | Generic fallback or consent-based AI reflection |
 | POST | `/api/v1/checkins` | Save emotional check-in |
 | GET | `/api/v1/checkins` | List the authenticated user's check-ins |

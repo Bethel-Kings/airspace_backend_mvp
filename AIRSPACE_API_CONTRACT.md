@@ -1,6 +1,6 @@
 # AirSpace API: Frontend Contract (v0.4.0)
 
-Verified against `Bethel-Kings/airspace_backend_mvp` with `airspace-handoff-fixes.patch` applied. Interactive docs: `{BASE_URL}/docs`. Machine-readable spec: `openapi.json` (attached alongside this file).
+Verified against `Bethel-Kings/airspace_backend_mvp`. Interactive docs: `{BASE_URL}/docs`. Machine-readable spec: `openapi.json` (attached alongside this file).
 
 ---
 
