@@ -261,7 +261,7 @@ async def chat(payload: ChatRequest, request: Request, user: User = Depends(curr
             ai_enabled=settings.ai_enabled,
             ai_status="skipped_for_safety",
         )
-    if not settings.ai_enabled:
+    if not settings.chat_ai_enabled:
         return ChatResponse(reply=GENERIC_FALLBACK, ai_enabled=False, ai_status="unavailable")
     if not payload.consent_to_ai_processing:
         return ChatResponse(ai_enabled=True, ai_status="consent_required", consent_required=True)

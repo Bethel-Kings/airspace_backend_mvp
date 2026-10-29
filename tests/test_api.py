@@ -388,10 +388,15 @@ def _msgs(*pairs):
 def test_chat_paths(client, monkeypatch):
     token = register(client, "c1@example.com")
     body = {"messages": _msgs(("user", "rough day"))}
+    monkeypatch.setattr(main.settings, "groq_api_key", None)
     monkeypatch.setattr(main.settings, "deepseek_api_key", None)
     r = client.post("/api/v1/chat", json=body, headers=auth(token)).json()
     assert r["ai_status"] == "unavailable" and r["ai_enabled"] is False
+    # DeepSeek alone does not enable chat.
     monkeypatch.setattr(main.settings, "deepseek_api_key", "sk-test")
+    r = client.post("/api/v1/chat", json=body, headers=auth(token)).json()
+    assert r["ai_status"] == "unavailable" and r["ai_enabled"] is False
+    monkeypatch.setattr(main.settings, "groq_api_key", "groq-test")
     r = client.post("/api/v1/chat", json=body, headers=auth(token)).json()
     assert r["ai_status"] == "consent_required" and r["reply"] is None
 
@@ -412,7 +417,7 @@ def test_chat_paths(client, monkeypatch):
 
 def test_chat_crisis_anywhere_in_history_skips_provider(client, monkeypatch):
     token = register(client, "c2@example.com")
-    monkeypatch.setattr(main.settings, "deepseek_api_key", "sk-test")
+    monkeypatch.setattr(main.settings, "groq_api_key", "groq-test")
     called = []
 
     async def spy(messages, style):
@@ -435,7 +440,7 @@ def test_chat_validation_and_limits(client, monkeypatch):
     assert client.post("/api/v1/chat", json=ends_assistant, headers=h).status_code == 422
     too_long = {"messages": _msgs(*[("user", "x" * 3900)] * 4)}
     assert client.post("/api/v1/chat", json=too_long, headers=h).status_code == 422
-    monkeypatch.setattr(main.settings, "deepseek_api_key", "sk-test")
+    monkeypatch.setattr(main.settings, "groq_api_key", "groq-test")
 
     async def fake(messages, style):
         from app.ai import ReflectionResult

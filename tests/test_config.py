@@ -38,3 +38,16 @@ def test_production_accepts_strong_secret():
 def test_development_gets_ephemeral_random_secret():
     a, b = make(), make()
     assert a.jwt_secret and b.jwt_secret and a.jwt_secret != b.jwt_secret
+
+
+def test_chat_ai_uses_groq_configuration_only():
+    defaults = make()
+    assert defaults.groq_api_key is None
+    assert defaults.groq_base_url == "https://api.groq.com/openai/v1"
+    assert defaults.groq_model == "openai/gpt-oss-120b"
+    assert not defaults.chat_ai_enabled
+
+    deepseek_only = make(deepseek_api_key="configured")
+    assert deepseek_only.ai_enabled
+    assert not deepseek_only.chat_ai_enabled
+    assert make(groq_api_key="configured").chat_ai_enabled

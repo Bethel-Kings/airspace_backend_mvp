@@ -39,11 +39,22 @@ class TranscriptionResult:
 
 
 def _client():
-    """DeepSeek via its OpenAI-compatible endpoint (text generation)."""
+    """DeepSeek via its OpenAI-compatible endpoint (reflection and voice replies)."""
     from openai import AsyncOpenAI
     return AsyncOpenAI(
         api_key=settings.deepseek_api_key,
         base_url=settings.deepseek_base_url,
+        timeout=30.0,
+        max_retries=1,
+    )
+
+
+def _groq_client():
+    """Groq via its OpenAI-compatible endpoint (chat)."""
+    from openai import AsyncOpenAI
+    return AsyncOpenAI(
+        api_key=settings.groq_api_key,
+        base_url=settings.groq_base_url,
         timeout=30.0,
         max_retries=1,
     )
@@ -93,7 +104,26 @@ async def generate_reflection(text: str, style: str, *, voice: bool = False) -> 
 
 async def generate_chat_reply(messages: list[dict], style: str) -> ReflectionResult:
     """`messages` is a list of {"role": "user"|"assistant", "content": str}."""
-    return await _complete(messages, style, chat=True)
+    if not settings.chat_ai_enabled:
+        return ReflectionResult(GENERIC_FALLBACK, "unavailable")
+    try:
+        response = await _groq_client().chat.completions.create(
+            model=settings.groq_model,
+            temperature=0.5,
+            # GPT-OSS reasoning shares this budget; 1024 leaves room for both reasoning and a concise reply.
+            max_completion_tokens=1024,
+            reasoning_effort="low",
+            include_reasoning=False,
+            messages=[
+                {"role": "system", "content": _system_prompt(style, chat=True)},
+                *messages,
+            ],
+        )
+        content = (response.choices[0].message.content or "").strip()
+        return ReflectionResult(content, "success") if content else ReflectionResult(GENERIC_FALLBACK, "fallback")
+    except Exception:
+        # Never log submitted text or provider errors, and never expose them to the client.
+        return ReflectionResult(GENERIC_FALLBACK, "fallback")
 
 
 async def transcribe_audio(data: bytes, extension: str, content_type: str | None, language: str | None) -> TranscriptionResult:
