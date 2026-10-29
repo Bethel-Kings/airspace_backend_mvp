@@ -23,10 +23,6 @@ class Settings(BaseSettings):
     deepseek_base_url: str = "https://api.deepseek.com"
     # "deepseek-chat" / "deepseek-reasoner" were retired on 2026-07-24; use the V4 names.
     deepseek_model: str = "deepseek-v4-flash"
-    # Chat uses Groq (OpenAI-compatible API), independently from DeepSeek.
-    groq_api_key: str | None = None
-    groq_base_url: str = "https://api.groq.com/openai/v1"
-    groq_model: str = "openai/gpt-oss-120b"
     # DeepSeek has no speech-to-text API, so voice vent transcription uses ElevenLabs Scribe.
     # Optional; without this key, voice vent reports "unavailable" and the client falls back to on-device speech recognition.
     elevenlabs_api_key: str | None = None
@@ -46,8 +42,8 @@ class Settings(BaseSettings):
 
     @property
     def chat_ai_enabled(self) -> bool:
-        """Chat is available when its Groq key is configured."""
-        return bool(self.groq_api_key)
+        """Chat is available when DeepSeek is configured."""
+        return bool(self.deepseek_api_key)
 
     @property
     def transcription_enabled(self) -> bool:

@@ -17,6 +17,9 @@ class User(Base):
     checkins: Mapped[list["CheckIn"]] = relationship(
         back_populates="user", cascade="all, delete-orphan", passive_deletes=True
     )
+    reflections: Mapped[list["Reflection"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan", passive_deletes=True
+    )
 
 
 class CheckIn(Base):
@@ -29,3 +32,16 @@ class CheckIn(Base):
     note: Mapped[str | None] = mapped_column(String(500), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
     user: Mapped["User"] = relationship(back_populates="checkins")
+
+
+class Reflection(Base):
+    __tablename__ = "reflections"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    # The text the user vented / typed (stored only when the user opts in).
+    source_text: Mapped[str] = mapped_column(String(12000), nullable=False)
+    # The AI-generated response.
+    ai_reply: Mapped[str] = mapped_column(String(4000), nullable=False)
+    prompt_style: Mapped[str] = mapped_column(String(20), default="gentle", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    user: Mapped["User"] = relationship(back_populates="reflections")

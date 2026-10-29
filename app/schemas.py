@@ -48,6 +48,9 @@ class UserResponse(BaseModel):
 
 class VentRequest(BaseModel):
     text: str = Field(min_length=1, max_length=12000)
+    prompt_style: str = Field(default="gentle", pattern="^(gentle|practical|reflective)$")
+    consent_to_ai_processing: bool = False
+    save_reflection: bool = False
 
 
 class ReframeRequest(BaseModel):
@@ -111,9 +114,27 @@ class VoiceVentResponse(BaseModel):
 class VentResponse(BaseModel):
     acknowledgement: str
     reflection_prompts: list[str]
+    reply: str | None = None
     safety_notice: str | None = None
     crisis_resources: list[CrisisResource] | None = None
+    ai_enabled: bool = False
+    ai_status: AiStatus | None = None
     stored: bool = False
+    saved: bool = False
+
+
+class ReflectionResponse(BaseModel):
+    id: int
+    source_text: str
+    ai_reply: str
+    prompt_style: str
+    created_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+    @field_validator("created_at")
+    @classmethod
+    def _utc(cls, v: datetime) -> datetime:
+        return v.replace(tzinfo=timezone.utc) if v.tzinfo is None else v
 
 
 class ReframeResponse(BaseModel):

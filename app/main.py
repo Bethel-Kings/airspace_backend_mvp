@@ -8,13 +8,13 @@ from app.ai import ALLOWED_AUDIO_EXTENSIONS, GENERIC_FALLBACK, generate_chat_rep
 from app.auth import current_user
 from app.config import settings
 from app.database import Base, engine, get_db
-from app.models import CheckIn, User
+from app.models import CheckIn, Reflection, User
 from app.ratelimit import client_ip, ip_limit, limiter
 from app.safety import get_crisis_message, get_crisis_resources, may_need_immediate_support
 from app.schemas import (
     ChatRequest, ChatResponse, CheckInCreate, CheckInResponse, CheckInUpdate, CrisisResource, ErrorResponse,
-    LoginRequest, ReframeRequest, ReframeResponse, RegisterRequest, TokenResponse, UserResponse, VentRequest,
-    VentResponse, VoiceVentResponse,
+    LoginRequest, ReframeRequest, ReframeResponse, ReflectionResponse, RegisterRequest, TokenResponse,
+    UserResponse, VentRequest, VentResponse, VoiceVentResponse,
 )
 from app.security import DUMMY_HASH, create_access_token, hash_password, verify_password
 
@@ -129,42 +129,61 @@ def me(user: User = Depends(current_user)):
 
 
 @app.post("/api/v1/vent", response_model=VentResponse, tags=["vent"],
-          summary="Submit vent text (never stored)", responses=AUTH_401)
-def vent(payload: VentRequest, user: User = Depends(current_user)):
-    # Submitted vent text is checked transiently; this endpoint neither stores nor forwards it to AI.
+          summary="Submit vent text — forwarded to AI if consented", responses={**AUTH_401, **RATE_429})
+async def vent(payload: VentRequest, request: Request, user: User = Depends(current_user),
+               db: Session = Depends(get_db)):
     crisis = may_need_immediate_support(payload.text)
+
+    # No AI consent — return static prompts only (text is never stored).
+    if not payload.consent_to_ai_processing:
+        return VentResponse(
+            acknowledgement=VENT_ACKNOWLEDGEMENT,
+            reflection_prompts=list(VENT_PROMPTS),
+            safety_notice=get_crisis_message() if crisis else None,
+            crisis_resources=get_crisis_resources() if crisis else None,
+            ai_enabled=settings.ai_enabled,
+            ai_status="consent_required" if settings.ai_enabled else "unavailable",
+        )
+
+    # Rate-limit paid AI calls only.
+    limiter.check(f"vent:user:{user.id}", 30, 3600)
+    limiter.check(f"vent:ip:{client_ip(request)}", 100, 3600)
+
+    result = await generate_reflection(payload.text, payload.prompt_style)
+
+    saved = False
+    if payload.save_reflection and result.status == "success":
+        db.add(Reflection(
+            user_id=user.id,
+            source_text=payload.text,
+            ai_reply=result.text,
+            prompt_style=payload.prompt_style,
+        ))
+        db.commit()
+        saved = True
+
     return VentResponse(
         acknowledgement=VENT_ACKNOWLEDGEMENT,
         reflection_prompts=list(VENT_PROMPTS),
+        reply=result.text,
         safety_notice=get_crisis_message() if crisis else None,
         crisis_resources=get_crisis_resources() if crisis else None,
-        stored=False,
+        ai_enabled=True,
+        ai_status=result.status,
+        saved=saved,
     )
 
 
 @app.post("/api/v1/reframe", response_model=ReframeResponse, tags=["vent"],
           summary="Reflection (generic fallback or consented AI)", responses={**AUTH_401, **RATE_429})
 async def reframe(payload: ReframeRequest, request: Request, user: User = Depends(current_user)):
-    # Do not route a flagged message through ordinary AI reframing.
-    if may_need_immediate_support(payload.text):
-        return ReframeResponse(
-            reflection=None,
-            safety_notice=get_crisis_message(),
-            crisis_resources=get_crisis_resources(),
-            needs_human_support=True,
-            ai_enabled=settings.ai_enabled,
-            ai_status="skipped_for_safety",
-        )
-
     if not settings.ai_enabled:
-        # This generic fallback does not use or transmit the submitted text.
         return ReframeResponse(
             reflection=GENERIC_FALLBACK,
             ai_enabled=False,
             ai_status="unavailable",
         )
 
-    # External AI processing requires explicit opt-in from the user.
     if not payload.consent_to_ai_processing:
         return ReframeResponse(
             reflection=None,
@@ -177,7 +196,15 @@ async def reframe(payload: ReframeRequest, request: Request, user: User = Depend
     limiter.check(f"reframe:user:{user.id}", 30, 3600)
     limiter.check(f"reframe:ip:{client_ip(request)}", 100, 3600)
     result = await generate_reflection(payload.text, payload.prompt_style)
-    return ReframeResponse(reflection=result.text, ai_enabled=True, ai_status=result.status)
+    crisis = may_need_immediate_support(payload.text)
+    return ReframeResponse(
+        reflection=result.text,
+        safety_notice=get_crisis_message() if crisis else None,
+        crisis_resources=get_crisis_resources() if crisis else None,
+        needs_human_support=False,
+        ai_enabled=True,
+        ai_status=result.status,
+    )
 
 
 @app.post(
@@ -252,15 +279,6 @@ async def vent_voice(
 @app.post("/api/v1/chat", response_model=ChatResponse, tags=["chat"],
           summary="Stateless AI chat turn (consented). Nothing is stored.", responses={**AUTH_401, **RATE_429})
 async def chat(payload: ChatRequest, request: Request, user: User = Depends(current_user)):
-    # Every user turn in the window is screened, so an earlier flagged message cannot be skipped by resending.
-    if any(m.role == "user" and may_need_immediate_support(m.content) for m in payload.messages):
-        return ChatResponse(
-            safety_notice=get_crisis_message(),
-            crisis_resources=get_crisis_resources(),
-            needs_human_support=True,
-            ai_enabled=settings.ai_enabled,
-            ai_status="skipped_for_safety",
-        )
     if not settings.chat_ai_enabled:
         return ChatResponse(reply=GENERIC_FALLBACK, ai_enabled=False, ai_status="unavailable")
     if not payload.consent_to_ai_processing:
@@ -269,7 +287,16 @@ async def chat(payload: ChatRequest, request: Request, user: User = Depends(curr
     limiter.check(f"chat:user:{user.id}", 60, 3600)
     limiter.check(f"chat:ip:{client_ip(request)}", 200, 3600)
     result = await generate_chat_reply([m.model_dump() for m in payload.messages], payload.prompt_style)
-    return ChatResponse(reply=result.text, ai_enabled=True, ai_status=result.status)
+    # Surface crisis resources alongside the AI reply when sensitive language is detected.
+    crisis = any(m.role == "user" and may_need_immediate_support(m.content) for m in payload.messages)
+    return ChatResponse(
+        reply=result.text,
+        safety_notice=get_crisis_message() if crisis else None,
+        crisis_resources=get_crisis_resources() if crisis else None,
+        needs_human_support=False,
+        ai_enabled=True,
+        ai_status=result.status,
+    )
 
 
 @app.post("/api/v1/checkins", response_model=CheckInResponse, status_code=201, tags=["checkins"],
@@ -330,5 +357,29 @@ def delete_checkin(checkin_id: int, db: Session = Depends(get_db), user: User = 
             summary="Delete account and all check-ins", responses=AUTH_401)
 def delete_account(db: Session = Depends(get_db), user: User = Depends(current_user)):
     db.delete(user)
+    db.commit()
+    return None
+
+
+@app.get("/api/v1/reflections", response_model=list[ReflectionResponse], tags=["reflections"],
+         summary="List saved reflections (newest first, max 100)", responses=AUTH_401)
+def list_reflections(db: Session = Depends(get_db), user: User = Depends(current_user)):
+    query = (
+        select(Reflection)
+        .where(Reflection.user_id == user.id)
+        .order_by(Reflection.created_at.desc(), Reflection.id.desc())
+        .limit(100)
+    )
+    return list(db.scalars(query))
+
+
+@app.delete("/api/v1/reflections/{reflection_id}", status_code=204, tags=["reflections"],
+            summary="Delete a saved reflection",
+            responses={**AUTH_401, 404: {"model": ErrorResponse, "description": "Reflection not found."}})
+def delete_reflection(reflection_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    item = db.scalar(select(Reflection).where(Reflection.id == reflection_id, Reflection.user_id == user.id))
+    if item is None:
+        raise HTTPException(status_code=404, detail="Reflection not found.")
+    db.delete(item)
     db.commit()
     return None
